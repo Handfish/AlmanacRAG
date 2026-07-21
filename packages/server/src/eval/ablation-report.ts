@@ -100,16 +100,46 @@ export const formatCrossoverTable = (report: CrossoverReport): string => {
   );
   lines.push("| N (chunks) | exact | HNSW | DiskANN |");
   lines.push("| ---------- | ----- | ---- | ------- |");
-  for (const s of [...report.sizes].sort((a, b) => a.n - b.n)) lines.push(crossoverRow(s));
+  const ordered = [...report.sizes].sort((a, b) => a.n - b.n);
+  for (const s of ordered) lines.push(crossoverRow(s));
   lines.push("");
+
+  // The honest reading is NOT "exact is faster" — past ~1k rows HNSW's raw kNN latency wins.
+  // It is that at the production corpus the latency delta is sub-millisecond (dwarfed by the
+  // ~1 s LLM router call), while exact keeps 100% recall and zero build cost, and HNSW at
+  // default params sheds recall and grows a multi-minute rebuild as the corpus scales. Pull
+  // those two curves out of the data so the conclusion is grounded, not asserted.
+  const hnswOf = (s: SizeResult) => s.methods.find((m) => m.method === "hnsw");
+  const recalls = ordered.map((s) => hnswOf(s)?.recallAt10 ?? null).filter((x): x is number =>
+    x !== null
+  );
+  const builds = ordered.map((s) => hnswOf(s)?.buildMs ?? null).filter((x): x is number =>
+    x !== null
+  );
+  const firstRecall = recalls[0] ?? null;
+  const lastRecall = recalls[recalls.length - 1] ?? null;
+  const maxBuild = builds.length > 0 ? Math.max(...builds) : null;
+  const bigN = ordered[ordered.length - 1]?.n ?? null;
+  const recallStr = firstRecall !== null && lastRecall !== null
+    ? `HNSW recall@10 falls from ${recall(firstRecall)} to ${recall(lastRecall)}`
+    : "HNSW is approximate";
+  const buildStr = maxBuild !== null && bigN !== null
+    ? `, and its build grows to ${(maxBuild / 1000).toFixed(0)}s at N=${
+      bigN.toLocaleString("en-US")
+    }`
+    : "";
   lines.push(
     report.hnswCrossoverN === null
-      ? "**Crossover: none in range** — exact sequential scan wins at every measured size; "
-        + "HNSW is slower *and* approximate. ADR-004 holds. The production corpus (~736 chunks) "
-        + "sits far below any crossover."
-      : `**Crossover: HNSW overtakes exact at N ≈ ${
+      ? "**Crossover: none in range** — exact sequential scan wins on latency at every measured "
+        + `size, and ${recallStr}${buildStr}. ADR-004 holds outright.`
+      : `**Crossover (latency): HNSW's kNN latency dips below exact at N ≈ ${
         report.hnswCrossoverN.toLocaleString("en-US")
-      }** — orders of magnitude above the production corpus (~736 chunks), so ADR-004's "no index" holds where it lives.`,
+      }** — but that is the wrong lens. At the production ~736 chunks the exact scan is a few `
+        + `ms (measured p50 3.6 ms end-to-end, §M3), dwarfed by the ~1 s LLM router call, so the `
+        + `index would buy a sub-millisecond saving. Against that: ${recallStr} at default `
+        + `\`ef_search\`${buildStr}, while exact is 100% recall with no build and no tuning. `
+        + `**ADR-004's "no index" is a recall + operational-cost win, not a latency loss — and it `
+        + `holds decisively at the corpus size the system actually runs at.**`,
   );
   if (!report.diskannAvailable) {
     lines.push(

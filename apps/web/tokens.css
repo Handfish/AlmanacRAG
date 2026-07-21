@@ -1,0 +1,45 @@
+/* Hallmark tokens · theme: Scarlet & Slate (custom) · genre: collegiate-editorial
+ * Palette loosely grounded in a public collegiate identity guide (scarlet #CC0033 · gold
+ * #EBB600 · teal #00626D · charcoal) — colors only, unbranded. Portable copy of the tokens
+ * the live page inlines in public/styles/global.css :root. */
+:root {
+  /* color — OKLCH */
+  --color-slate: oklch(19% 0.006 25);
+  --color-panel: oklch(24% 0.008 25);
+  --color-panel-2: oklch(28% 0.010 25);
+  --color-ink: oklch(95% 0.004 60);
+  --color-muted: oklch(70% 0.012 40);
+  --color-line: oklch(33% 0.012 25);
+  --color-line-strong: oklch(43% 0.016 25);
+  --color-scarlet: oklch(60% 0.215 20);
+  --color-scarlet-deep: oklch(42% 0.150 22);
+  --color-gold: oklch(81% 0.150 88);
+  --color-teal: oklch(66% 0.100 200);
+  --color-alert: oklch(65% 0.190 32);
+  --color-chip: oklch(26% 0.020 22);
+  --color-focus: oklch(60% 0.215 20);
+
+  /* type */
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, monospace;
+
+  /* space — 4pt scale */
+  --space-2xs: 0.25rem;
+  --space-xs: 0.4rem;
+  --space-sm: 0.6rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+
+  /* radius */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-mid: 200ms;
+}

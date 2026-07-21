@@ -1,0 +1,20 @@
+[
+  {
+    "date": "2026-07-21",
+    "macrostructure": "Product-Surface (reskin)",
+    "theme": "custom",
+    "theme_axes": "dark / high-contrast-serif / warm-scarlet",
+    "vibe": "scarlet accent over warm slate — collegiate identity, colors only",
+    "enrichment": "none",
+    "brief": "Almanac course-catalog chat · Scarlet & Slate reskin (unbranded collegiate palette)"
+  },
+  {
+    "date": "2026-07-21",
+    "macrostructure": "Product-Surface (reskin)",
+    "theme": "custom",
+    "theme_axes": "dark / high-contrast-serif / chromatic-green",
+    "vibe": "deep forest-pool — ferns above, fathoms below",
+    "enrichment": "none",
+    "brief": "Almanac course-catalog chat · Ferns & Fathom reskin"
+  }
+]

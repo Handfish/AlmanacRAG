@@ -8,7 +8,7 @@
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white">
   <img alt="pgvector" src="https://img.shields.io/badge/pgvector-halfvec-4169E1">
   <img alt="Anthropic" src="https://img.shields.io/badge/Claude-Haiku%2FSonnet-D97757">
-  <img alt="tests" src="https://img.shields.io/badge/tests-120%20green-2ea44f">
+  <img alt="tests" src="https://img.shields.io/badge/tests-160%2B-2ea44f">
 </p>
 
 Almanac turns a public university continuing-education catalog into a chat interface you can _trust with a price_. It is a deliberate answer to the failure mode of most retrieval-augmented chatbots: the language model reads a retrieved document, retypes a number, and quietly gets it wrong. Here that is structurally impossible — the model never emits a fact.
@@ -46,7 +46,7 @@ The consequence, stated as a testable claim rather than a vibe:
 
 ## Why this isn't "just another RAG wrapper"
 
-The honest baseline for 995 short listings isn't naive prompt-stuffing — it's a **compact index**: one ~50-token line per course, ~54k tokens, cacheable, in-window. That baseline is genuinely _competitive_ on lookup and comparison, and this README says so. It loses decisively on four things, and those four are the entire justification for the project:
+The honest baseline for 993 short listings isn't naive prompt-stuffing — it's a **compact index**: one ~50-token line per section, ~23k tokens (measured), cacheable, in-window. That baseline is genuinely _competitive_ on lookup and comparison, and this README says so — **and now measures it** ([Phase 8](./docs/phase-8-ablation.md)): it matches on lookup (0.95 vs 0.98 nDCG) and loses decisively on four things, which are the entire justification for the project:
 
 |                                | Compact-index baseline                                                              | Almanac                                     |
 | ------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------- |
@@ -58,6 +58,20 @@ The honest baseline for 995 short listings isn't naive prompt-stuffing — it's 
 The last row is qualitatively different: it isn't _harder_ for the baseline, it's **unavailable to it forever**, because the information no longer exists anywhere a prompt can reach. Nobody at the institution can currently answer _"what did this cost last fall?"_ Almanac can — but only if it started keeping records before the site overwrote them, which is why ingestion shipped first.
 
 **Knowing where your system is overkill, and naming the exact crossover where it wins, is the point.**
+
+### The ablation, measured (Phase 8)
+
+Every capability turned on one at a time, scored by query shape on the 87-item golden set. The full table, both baselines, and the ADR-004 crossover live in [`docs/phase-8-ablation.md`](./docs/phase-8-ablation.md); the load-bearing rows:
+
+| Config                     | filter_exact | nDCG (lookup) | nDCG (filtered) | Memory         | p95    |
+| -------------------------- | ------------ | ------------- | --------------- | -------------- | ------ |
+| naive vector only          | —            | 1.00          | 0.40            | —              | 8ms    |
+| + hybrid RRF + reranker    | —            | 0.98          | 0.40            | —              | 6ms    |
+| **+ typed filter routing** | **100%**     | 0.98          | **1.00**        | —              | 6ms    |
+| + retention & history      | 100%         | 0.98          | 1.00            | **✓**          | 6ms    |
+| compact-index baseline     | —            | 0.95          | 0.74            | ✗ _impossible_ | 7815ms |
+
+Two findings fall out. **(1)** The one row that matters is `+ typed filter routing`: filtered-query nDCG jumps **0.40 → 1.00** — _attention is not a `WHERE` clause_, now a number. **(2)** On 736 short docs, hybrid/reranker/prefixes buy **nothing** (lookup is already 1.00) — this is a query-understanding problem, not a retrieval problem, exactly as designed. The compact-index competitor lands where §1.1 predicted: competitive on lookup, loses on filtered (0.74), ~1300× slower, and can't do memory at any price.
 
 ---
 
@@ -83,7 +97,7 @@ query ── router ─┤
 
 **Hybrid search, one round trip.** Vector kNN and BM25 full-text are fused by **Reciprocal Rank Fusion** in a single SQL statement — no application-side merge. Semantic recall catches _"cybersecurity"_; lexical recall catches exact course codes and acronyms that embeddings blur.
 
-**No vector index — on purpose (ADR-004).** The entire vector set is ~870 chunks ≈ **1.7 MB**. An exact sequential scan computes distances in **well under a millisecond — faster than HNSW, at 100% recall** — with no index to build, no `ef_search` to tune, and no post-filter overfiltering hazard. The decision is written as a _threshold_ ("add an index above ~50k chunks"), not a guess, which is why it survived a 3× revision to the corpus estimate without changing.
+**No vector index — on purpose (ADR-004), and now measured.** The entire vector set is ~736 chunks ≈ **1.7 MB**; the exact scan runs in a few ms (p50 3.6 ms end-to-end), invisible next to the ~1 s router call. The [Phase-8 crossover sweep](./docs/phase-8-ablation.md#3-adr-004-crossover--exact-vs-hnsw-vs-diskann) is honest about the tradeoff: HNSW has _lower raw kNN latency_ past ~1k rows, but at default `ef_search` its recall falls **91% → 23%** as the corpus grows to 100k and its build balloons to **5.6 minutes**, while the exact scan is **100% recall, zero build, zero tuning**. So "no index" is a recall + operational-cost win, not a latency loss — and it holds decisively at the size the system runs at.
 
 **Query parsing is the real bottleneck, not retrieval.** Finding "cybersecurity" among 995 short documents is trivial. Misreading _"under $2,000"_ as `2000` cents instead of `200000` is silent and catastrophic. So the highest-leverage component is turning intent into a correct typed `ListingFilter` — and it gets its own eval slice with directly-labelable ground truth (`expected_filter`) and a headline metric (`filter_exact`). The filter round-trips to the UI as **editable chips**, so the model's interpretation is always visible and correctable.
 
@@ -153,7 +167,7 @@ Measuring first, then writing down which of your own arguments the data destroye
 - **PostgreSQL 16 + pgvector** — one database does structured filtering, full-text (BM25 via `tsvector`), and vector search (`halfvec`). Dual clients: pooled through PgBouncer for queries, a direct admin connection for DDL only.
 - **Anthropic Claude** — Haiku-class for extraction and chunk-context (a full extraction pass over 995 pages costs ~$4), Sonnet-class for the chat router.
 - **Web** — Astro 5 + a lean vanilla-TS island importing the domain contracts (`Card`/`ListingFilter`), calling the server's JSON endpoints. Editable filter chips re-run with no LLM call; a second OpenAI-compatible `/v1` surface drops into Open WebUI.
-- **Testing** — `@effect/vitest` + Testcontainers (real Postgres per suite, transaction-rollback isolation). 120 tests green across `tsc` · `oxlint` · `dprint` · `vitest` · `astro check`, run in CI.
+- **Testing** — `@effect/vitest` + Testcontainers (real Postgres per suite, transaction-rollback isolation). 160+ tests across `tsc` · `oxlint` · `dprint` · `vitest` · `astro check`, run in CI.
 
 ---
 
@@ -161,18 +175,19 @@ Measuring first, then writing down which of your own arguments the data destroye
 
 Honest and current — this is a system being built in phases against a live source, not a demo.
 
-| Phase                    | Scope                                                                                                                                                                                    | State                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 0 · Foundations          | Effect v4 spine, dual SQL clients, migrations, telemetry, test harness, CI                                                                                                               | ✅ shipped                          |
-| 1 · Re-crawl & retention | 995 pages re-crawled (0 errors), `raw_markdown` + `page_fields` stored, course-grouping resolved (732 courses), **retention clock started**, gated sweep verified refusing a short crawl | ✅ shipped — _the clock is running_ |
-| 2 · Extraction           | One-schema typed extractor + 13 hazard tests + field-level change logging; **994 pages extracted → 731 courses / 2,016 fees / 213 relations** (Gemini)                                   | ✅ shipped                          |
-| 3 · Retrieval            | Chunk + embed, hybrid RRF search, exact-scan kNN; **731 chunks+embeddings indexed, `/search` live, exact-scan p50 ~4 ms** (ADR-004 confirmed)                                            | ✅ shipped                          |
-| 4 · Eval harness         | 87-item golden set (7 shapes) + runner + §11.4 CI gate — _before_ the chat UI. **`filter_exact` 100% · nDCG@10 0.99 · refusal 100% · 0 fee-×100 errors**                                 | ✅ shipped                          |
-| 5 · Chat & hydration     | Router, the `CardRef → Card` hydration guarantee, SSE typed events, grounded refusal, single-active-run; **`prose_faithful` ~81%** (LlmJudge)                                            | ✅ shipped                          |
-| 6 · Web UI               | Astro + vanilla-TS: cards, **editable filter chips** (re-run with no LLM), zero-result relaxation, freshness, feedback→eval; **OpenAI-compatible `/v1`** + Open WebUI quadlet            | ✅ shipped                          |
-| 7 · History querying     | `course_history` over the accrued retention window                                                                                                                                       | ▷ designed                          |
+| Phase                    | Scope                                                                                                                                                                                     | State                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 0 · Foundations          | Effect v4 spine, dual SQL clients, migrations, telemetry, test harness, CI                                                                                                                | ✅ shipped                          |
+| 1 · Re-crawl & retention | 995 pages re-crawled (0 errors), `raw_markdown` + `page_fields` stored, course-grouping resolved (732 courses), **retention clock started**, gated sweep verified refusing a short crawl  | ✅ shipped — _the clock is running_ |
+| 2 · Extraction           | One-schema typed extractor + 13 hazard tests + field-level change logging; **994 pages extracted → 731 courses / 2,016 fees / 213 relations** (Gemini)                                    | ✅ shipped                          |
+| 3 · Retrieval            | Chunk + embed, hybrid RRF search, exact-scan kNN; **731 chunks+embeddings indexed, `/search` live, exact-scan p50 ~4 ms** (ADR-004 confirmed)                                             | ✅ shipped                          |
+| 4 · Eval harness         | 87-item golden set (7 shapes) + runner + §11.4 CI gate — _before_ the chat UI. **`filter_exact` 100% · nDCG@10 0.99 · refusal 100% · 0 fee-×100 errors**                                  | ✅ shipped                          |
+| 5 · Chat & hydration     | Router, the `CardRef → Card` hydration guarantee, SSE typed events, grounded refusal, single-active-run; **`prose_faithful` ~81%** (LlmJudge)                                             | ✅ shipped                          |
+| 6 · Web UI               | Astro + vanilla-TS: cards, **editable filter chips** (re-run with no LLM), zero-result relaxation, freshness, feedback→eval; **OpenAI-compatible `/v1`** + Open WebUI quadlet             | ✅ shipped                          |
+| 7 · History querying     | `course_history` + deterministic observation-window honesty ("I don't know yet" at _n_=1); temporal eval slice; synthetic-history test harness                                            | ✅ shipped                          |
+| 8 · Ablation & baselines | The §11.5 table by shape, compact-index competitor measured, **ADR-004 crossover published**, bge reranker behind the port — see [`docs/phase-8-ablation.md`](./docs/phase-8-ablation.md) | ✅ shipped                          |
 
-The [architecture document](./architecture.md) is the authoritative artifact and carries the full reasoning, DDL, ADRs, and eval design.
+The [architecture document](./architecture.md) is the authoritative artifact and carries the full reasoning, DDL, ADRs, and eval design. Phase-8 findings: [`docs/phase-8-ablation.md`](./docs/phase-8-ablation.md).
 
 ---
 

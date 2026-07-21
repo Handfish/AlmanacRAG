@@ -62,11 +62,14 @@ export const findHnswCrossover = (sizes: ReadonlyArray<SizeResult>): number | nu
   return null;
 };
 
-const vectorLiteral = (v: ReadonlyArray<number>): string => `[${v.join(",")}]`;
-
-/** A random unit-ish vector, rounded to keep the literal small. */
-const randomVector = (dims: number): ReadonlyArray<number> =>
-  Array.from({ length: dims }, () => Math.round(Math.random() * 1e4) / 1e4);
+// Synthetic corpora must have REAL neighbor structure or the recall column is meaningless:
+// uniform-random vectors in high dimensions have all-but-equal pairwise distances (distance
+// concentration), so "the top-10" is arbitrary and HNSW recall reads ~0. Instead we generate
+// CLUSTERED data — points scattered around a handful of random centroids — and sample the
+// query vectors from EXISTING points, so each query has a genuine nearest neighborhood that an
+// approximate index can be scored against.
+const CENTROIDS = 64;
+const NOISE = 0.15; // per-dimension jitter around a centroid coord (in [0,1])
 
 const timeQueries = (queries: ReadonlyArray<string>, k: number) =>
   Effect.gen(function*() {
@@ -102,20 +105,44 @@ const populate = (n: number, dims: number) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
     yield* sql`DROP TABLE IF EXISTS bench_vec`;
+    yield* sql`DROP TABLE IF EXISTS bench_centroid`;
+    // Centroids: CENTROIDS random points in [0,1]^dims, stored as real[] for arithmetic.
+    yield* sql.unsafe(`CREATE TABLE bench_centroid (cid int PRIMARY KEY, v real[])`);
+    yield* sql.unsafe(
+      `INSERT INTO bench_centroid (cid, v)
+       SELECT gc, (SELECT array_agg(random()) FROM generate_series(1, ${dims}))
+       FROM generate_series(1, ${CENTROIDS}) gc`,
+    );
     yield* sql.unsafe(`CREATE TABLE bench_vec (id bigint PRIMARY KEY, embedding halfvec(${dims}))`);
-    // Generate rows in Postgres in batches (a correlated subquery builds each row's random
-    // vector). Batching keeps any single statement bounded.
+    // Each point = its cluster's centroid + per-dim jitter (clamped to [0,1]); WITH ORDINALITY
+    // + ORDER BY keeps the coordinates aligned. Batched so any one statement stays bounded.
     const BATCH = 2000;
     for (let start = 1; start <= n; start += BATCH) {
       const end = Math.min(n, start + BATCH - 1);
       yield* sql.unsafe(
         `INSERT INTO bench_vec (id, embedding)
          SELECT g,
-           ('[' || (SELECT string_agg(round(random()::numeric, 4)::text, ',')
-                    FROM generate_series(1, ${dims})) || ']')::halfvec
+           ('[' || (
+             SELECT string_agg(
+               round(greatest(0, least(1, o.val + (random() - 0.5) * ${NOISE}))::numeric, 4)::text,
+               ',' ORDER BY o.ord)
+             FROM bench_centroid c, unnest(c.v) WITH ORDINALITY AS o(val, ord)
+             WHERE c.cid = 1 + (g % ${CENTROIDS})
+           ) || ']')::halfvec
          FROM generate_series(${start}, ${end}) AS g`,
       );
     }
+  });
+
+/** Sample `nQueries` existing points as query vectors (halfvec literals). Sampling real points
+ * guarantees each query has a true nearest neighborhood (itself + clustermates), so approximate
+ * recall is a genuine measurement rather than a coin toss over near-tied random distances. */
+const sampleQueries = (nQueries: number) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient;
+    const rows = yield* sql<{ v: string; }>`
+      SELECT embedding::text AS v FROM bench_vec ORDER BY random() LIMIT ${nQueries}`;
+    return rows.map((r) => r.v);
   });
 
 const measureSize = (n: number, dims: number, nQueries: number, k: number) =>
@@ -124,7 +151,7 @@ const measureSize = (n: number, dims: number, nQueries: number, k: number) =>
     yield* Effect.logInfo(`crossover: N=${n} dims=${dims} — populating…`);
     yield* populate(n, dims);
 
-    const queries = Array.from({ length: nQueries }, () => vectorLiteral(randomVector(dims)));
+    const queries = yield* sampleQueries(nQueries);
 
     // ── exact (no index) ──
     yield* sql`DROP INDEX IF EXISTS bench_hnsw`;
@@ -160,6 +187,7 @@ const measureSize = (n: number, dims: number, nQueries: number, k: number) =>
     const diskann = yield* buildDiskann(queries, exact.ids, k);
 
     yield* sql`DROP TABLE IF EXISTS bench_vec`;
+    yield* sql`DROP TABLE IF EXISTS bench_centroid`;
     return {
       n,
       dims,
@@ -238,6 +266,7 @@ export const runCrossover = (
       Effect.gen(function*() {
         const sql = yield* SqlClient;
         yield* sql`DROP TABLE IF EXISTS bench_vec`.pipe(Effect.ignore);
+        yield* sql`DROP TABLE IF EXISTS bench_centroid`.pipe(Effect.ignore);
       }).pipe(Effect.catchCause(() => Effect.void)),
     ),
     Effect.orDie,
