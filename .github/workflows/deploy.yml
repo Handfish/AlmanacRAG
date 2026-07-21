@@ -31,7 +31,7 @@ on:
 
 env:
   PROJECT_NAME: almanac # GCP resource prefix (Cloud Run, Artifact Registry, secrets) — matches var.project_name
-  PAGES_PROJECT: almanac # Cloudflare Pages project name — matches var.cf_pages_project_name
+  PAGES_PROJECT: almanac-rag # Cloudflare Pages project name — matches var.cf_pages_project_name
   GCP_REGION: us-east1
 
 jobs:

@@ -19,8 +19,8 @@ output "pages_project_name" {
 }
 
 output "pages_url" {
-  description = "The production Pages URL."
-  value       = "https://${cloudflare_pages_project.web.name}.pages.dev"
+  description = "The production Pages URL (Cloudflare's actual assigned subdomain — may carry a suffix if the name collided globally)."
+  value       = "https://${cloudflare_pages_project.web.subdomain}"
 }
 
 # Sensitive — surface with `terraform output -raw neon_postgres_url_pooled`.
