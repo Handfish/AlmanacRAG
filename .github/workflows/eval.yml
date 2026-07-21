@@ -1,0 +1,54 @@
+# The §11.4 eval gate: a PR that drops filter_exact or nDCG@10 by more than 2 points
+# against the committed baseline fails. Unlike ci.yml (which builds the corpus-free unit +
+# testcontainer suite — the harness's own correctness, including the gate logic, metrics,
+# and router decode), THIS gate needs the populated catalog + a Gemini key, which live
+# outside ephemeral CI. So it runs only when both secrets are configured and self-skips
+# (green) otherwise, rather than blocking PRs on infrastructure it can't reach.
+name: eval-gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/server/src/eval/**"
+      - "packages/server/src/adapters/router-prompt.ts"
+      - "packages/server/src/adapters/router-gemini.ts"
+      - "packages/domain/src/filter.ts"
+      - "packages/domain/src/ports/router.ts"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for eval secrets
+        id: secrets
+        run: |
+          if [ -n "${{ secrets.POSTGRES_URL }}" ] && [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::eval gate skipped — POSTGRES_URL / GEMINI_API_KEY not configured. The harness's own tests still ran in CI."
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.secrets.outputs.configured == 'true'
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.configured == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        if: steps.secrets.outputs.configured == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Migrate + seed + eval (gate on)
+        if: steps.secrets.outputs.configured == 'true'
+        env:
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+          POSTGRES_ADMIN_URL: ${{ secrets.POSTGRES_ADMIN_URL || secrets.POSTGRES_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          pnpm --filter @catalog/server migrate
+          pnpm --filter @catalog/server eval:seed
+          pnpm --filter @catalog/server eval   # exits non-zero if the §11.4 gate fails

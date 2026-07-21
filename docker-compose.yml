@@ -1,0 +1,30 @@
+# Local dev Postgres for the catalog RAG pipeline.
+#
+# pgvector image (NOT stock postgres) because migration 0002 runs
+# `CREATE EXTENSION vector` — the embedding column needs pgvector.
+#
+# Published on host :5433 (host :5432 is usually taken by a system Postgres),
+# which is exactly what .env / .env.example point POSTGRES_URL / POSTGRES_ADMIN_URL at.
+# The named volume `catalog-pgdata` persists the corpus across `docker compose down`
+# so the seeded data — and the M1 retention clock (system_epoch/first_seen_at) —
+# survive restarts. Use `docker compose down -v` to wipe it and start fresh.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: catalog-pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: catalog
+    ports:
+      - "5433:5432"
+    volumes:
+      - catalog-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d catalog"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  catalog-pgdata:

@@ -1,0 +1,49 @@
+{
+  "name": "cecc-course-catalog-rag",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check": "dprint check && tsc -b",
+    "format": "dprint fmt",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "migrate": "pnpm --filter @catalog/server migrate",
+    "dev:server": "pnpm --filter @catalog/server dev",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "seed": "pnpm --filter @catalog/server migrate && pnpm --filter @catalog/server crawl && pnpm --filter @catalog/server extract:sync && pnpm --filter @catalog/server index && pnpm --filter @catalog/server eval:seed"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-beta.99",
+    "@types/node": "^22.8.5",
+    "dprint": "^0.48.0",
+    "oxlint": "^1.23.0",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "effect": "4.0.0-beta.99",
+      "@effect/platform-node": "4.0.0-beta.99",
+      "@effect/sql-pg": "4.0.0-beta.99",
+      "@effect/vitest": "4.0.0-beta.99",
+      "@effect/opentelemetry": "4.0.0-beta.99",
+      "@effect/ai": "4.0.0-beta.99",
+      "@effect/ai-anthropic": "4.0.0-beta.99",
+      "@opentelemetry/sdk-trace-base": "2.8.0",
+      "@opentelemetry/sdk-trace-node": "2.8.0",
+      "@opentelemetry/semantic-conventions": "1.41.1",
+      "@opentelemetry/exporter-trace-otlp-http": "0.219.0"
+    },
+    "onlyBuiltDependencies": [
+      "dprint",
+      "esbuild"
+    ]
+  }
+}

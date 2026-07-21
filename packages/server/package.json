@@ -1,0 +1,45 @@
+{
+  "name": "@catalog/server",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "migrate": "tsx src/db/migrate.ts",
+    "crawl": "tsx src/ingest/main-crawl.ts",
+    "extract": "tsx src/main-extract.ts",
+    "extract:batch": "tsx src/main-extract-batch.ts",
+    "extract:sync": "tsx src/main-extract-sync.ts",
+    "report": "tsx src/main-report.ts",
+    "index": "tsx src/main-index.ts",
+    "search": "tsx src/main-search.ts",
+    "eval:seed": "tsx src/main-eval-seed.ts",
+    "eval": "tsx src/main-eval.ts",
+    "benchmark:fetch": "tsx src/ingest/benchmark.ts"
+  },
+  "dependencies": {
+    "@catalog/domain": "workspace:*",
+    "@effect/ai-anthropic": "4.0.0-beta.99",
+    "@effect/opentelemetry": "4.0.0-beta.99",
+    "@effect/platform-node": "4.0.0-beta.99",
+    "@effect/sql-pg": "4.0.0-beta.99",
+    "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
+    "@opentelemetry/sdk-trace-base": "2.8.0",
+    "@opentelemetry/sdk-trace-node": "2.8.0",
+    "@opentelemetry/semantic-conventions": "1.41.1",
+    "cheerio": "^1.0.0",
+    "chrono-node": "^2.7.0",
+    "dotenv": "^16.4.5",
+    "effect": "4.0.0-beta.99",
+    "pg": "^8.13.0",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-beta.99",
+    "@testcontainers/postgresql": "^11.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/turndown": "^5.0.5",
+    "testcontainers": "^11.0.0",
+    "tsx": "^4.19.2"
+  }
+}

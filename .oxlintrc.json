@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "**/build",
+    "**/dist",
+    "**/node_modules",
+    "**/*.gen.ts",
+    "reference-scraper",
+    "reference-catalog",
+    "reference-ai-chat",
+    "reference-ai-lib"
+  ]
+}
