@@ -88,8 +88,8 @@ export const insertAssistantMessage = (
     return rows[0]!.id;
   });
 
-/** Record thumbs up/down on a message (§5.5). `promoted_to_eval_item` is set later by
- * the Phase-6 feedback→eval promotion. */
+/** Record thumbs up/down on a message (§5.5). `promoted_to_eval_item` is set separately
+ * by `promoteFeedbackToEval` when a thumbs-down arrives (the Phase-6 promotion loop). */
 export const insertFeedback = (messageId: string, rating: 1 | -1, note: string | null) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
@@ -98,4 +98,82 @@ export const insertFeedback = (messageId: string, rating: 1 | -1, note: string |
       VALUES (${messageId}, ${rating}, ${note})
       ON CONFLICT (message_id) DO UPDATE SET rating = EXCLUDED.rating, note = EXCLUDED.note
     `;
+  });
+
+// ── feedback → eval promotion (§5.5) ──────────────────────────────────────────────
+// "A thumbs-down becomes a golden-set item becomes a regression test" (§5.5). A negative
+// rating on an ASSISTANT turn promotes the USER's preceding question into `eval_item` as
+// a CANDIDATE — reviewed_by/reviewed_at stay NULL, which is the convention that keeps it
+// OUT of the graded golden set (the runner and the seed both scope to `reviewed_at IS NOT
+// NULL`, so a raw candidate can never move the §11.4 gate). A human curates it — labels
+// `expected_filter`/`expected_ids`, sets `reviewed_at` — to admit it. `shape` is inferred
+// from what the turn actually did (refused → unanswerable; a filter → filtered; else
+// lookup); the reviewer corrects it. `feedback.promoted_to_eval_item` closes the loop and
+// makes promotion idempotent (a second thumbs-down on the same message is a no-op).
+
+interface PromotableMessage {
+  readonly question: string;
+  readonly refused: boolean;
+  readonly hasFilter: boolean;
+}
+
+/** The user question a thumbs-down refers to, plus the assistant turn's own signals. The
+ * question is the newest `user` message BEFORE this assistant message in the session. */
+const loadPromotable = (messageId: string) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient;
+    const rows = yield* sql<{ question: string; refused: boolean; hasFilter: boolean; }>`
+      SELECT u.prose AS question, a.refused, (a.filter IS NOT NULL) AS has_filter
+      FROM chat_message a
+      JOIN chat_message u
+        ON u.session_id = a.session_id AND u.role = 'user' AND u.id < a.id
+      WHERE a.id = ${messageId} AND a.role = 'assistant'
+      ORDER BY u.id DESC
+      LIMIT 1
+    `;
+    const r = rows[0];
+    return r === undefined
+      ? Option.none<PromotableMessage>()
+      : Option.some<PromotableMessage>({
+        question: r.question,
+        refused: r.refused,
+        hasFilter: r.hasFilter,
+      });
+  });
+
+const inferShape = (m: PromotableMessage): string =>
+  m.refused ? "unanswerable" : m.hasFilter ? "filtered" : "lookup";
+
+/**
+ * Promote a thumbs-down message's question to a candidate `eval_item` (§5.5) and record
+ * the promotion on the `feedback` row. Idempotent and safe to call unconditionally after
+ * a negative rating: returns the eval_item id if a new (or existing) candidate is linked,
+ * `None` if the message has no answerable question to promote. A `note` becomes the item's
+ * `rubric` (what the reviewer should check). Never touches the graded golden set.
+ */
+export const promoteFeedbackToEval = (messageId: string, note: string | null) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient;
+    const promotable = yield* loadPromotable(messageId);
+    if (Option.isNone(promotable)) return Option.none<string>();
+    const m = promotable.value;
+
+    // Insert (or find) the candidate item by its natural key (question). reviewed_* NULL
+    // ⇒ candidate: excluded from the runner and from the seed's reconcile sweep.
+    const inserted = yield* sql<{ id: string; }>`
+      INSERT INTO eval_item (question, shape, rubric)
+      VALUES (${m.question}, ${inferShape(m)}, ${note})
+      ON CONFLICT (question) DO NOTHING
+      RETURNING id::text AS id
+    `;
+    const itemId = inserted[0]?.id
+      ?? (yield* sql<{ id: string; }>`
+        SELECT id::text AS id FROM eval_item WHERE question = ${m.question}`)[0]?.id;
+    if (itemId === undefined) return Option.none<string>();
+
+    yield* sql`
+      UPDATE feedback SET promoted_to_eval_item = ${itemId}
+      WHERE message_id = ${messageId}
+    `;
+    return Option.some(itemId);
   });

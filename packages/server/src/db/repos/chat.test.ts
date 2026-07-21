@@ -16,6 +16,7 @@ import {
   insertAssistantMessage,
   insertFeedback,
   insertUserMessage,
+  promoteFeedbackToEval,
   releaseRun,
 } from "./chat.js";
 
@@ -122,6 +123,76 @@ describe("chat repo", () => {
           SELECT rating, note FROM feedback WHERE message_id = ${messageId}`;
         expect(fb[0]!.rating).toBe(-1);
         expect(fb[0]!.note).toBe("wrong campus");
+      })));
+
+    it.effect("thumbs-down promotes the question to a CANDIDATE eval_item (§5.5)", () =>
+      withTransactionRollback(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* ensureSession(SESSION);
+        yield* insertUserMessage(SESSION, "evening courses in Newark under $2000");
+        const answer = new Answer({
+          prose: "Two match.",
+          cards: [],
+          filter: new ListingFilter({ campus: "Newark", isEvening: true }),
+          followups: [],
+        });
+        const messageId = yield* insertAssistantMessage(SESSION, answer, [], false, null);
+        yield* insertFeedback(messageId, -1, "missed the fee");
+
+        const promoted = yield* promoteFeedbackToEval(messageId, "missed the fee");
+        expect(Option.isSome(promoted)).toBe(true);
+        const itemId = Option.getOrThrow(promoted);
+
+        // The promoted item is a CANDIDATE: reviewed_* NULL keeps it out of the graded
+        // golden set (the runner + seed both scope to reviewed_at IS NOT NULL).
+        const item = yield* sql<{
+          question: string;
+          shape: string;
+          rubric: string | null;
+          reviewedAt: string | null;
+          reviewedBy: string | null;
+        }>`
+          SELECT question, shape, rubric,
+                 reviewed_at::text AS reviewed_at, reviewed_by
+          FROM eval_item WHERE id = ${itemId}`;
+        expect(item[0]!.question).toBe("evening courses in Newark under $2000");
+        expect(item[0]!.shape).toBe("filtered"); // inferred from the stored filter
+        expect(item[0]!.rubric).toBe("missed the fee");
+        expect(item[0]!.reviewedAt).toBeNull();
+        expect(item[0]!.reviewedBy).toBeNull();
+
+        // The feedback row records the promotion (idempotent: a re-promote is a no-op).
+        const fb = yield* sql<{ promotedToEvalItem: string | null; }>`
+          SELECT promoted_to_eval_item::text AS promoted_to_eval_item
+          FROM feedback WHERE message_id = ${messageId}`;
+        expect(fb[0]!.promotedToEvalItem).toBe(itemId);
+
+        const again = yield* promoteFeedbackToEval(messageId, "missed the fee");
+        expect(Option.getOrNull(again)).toBe(itemId); // same item, no duplicate
+        const count = yield* sql<{ n: number; }>`
+          SELECT count(*)::int AS n FROM eval_item
+          WHERE question = 'evening courses in Newark under $2000'`;
+        expect(count[0]!.n).toBe(1);
+      })));
+
+    it.effect("a refused turn promotes as shape 'unanswerable' (§5.5/§10.6)", () =>
+      withTransactionRollback(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* ensureSession(SESSION);
+        yield* insertUserMessage(SESSION, "does astrophysics run every year?");
+        const answer = new Answer({
+          prose: "I can't tell yet.",
+          cards: [],
+          filter: null,
+          followups: [],
+        });
+        const messageId = yield* insertAssistantMessage(SESSION, answer, [], true, null);
+        yield* insertFeedback(messageId, -1, null);
+        const promoted = yield* promoteFeedbackToEval(messageId, null);
+        const itemId = Option.getOrThrow(promoted);
+        const item = yield* sql<{ shape: string; }>`
+          SELECT shape FROM eval_item WHERE id = ${itemId}`;
+        expect(item[0]!.shape).toBe("unanswerable");
       })));
   });
 });

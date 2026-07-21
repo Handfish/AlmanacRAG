@@ -23,6 +23,7 @@
     "**/build",
     "**/coverage",
     "**/node_modules",
+    "**/.astro",
     "**/.tsbuildinfo",
     "reference-scraper",
     "reference-catalog",

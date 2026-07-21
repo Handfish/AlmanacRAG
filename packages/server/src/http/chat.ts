@@ -19,6 +19,7 @@ import {
   insertAssistantMessage,
   insertFeedback,
   insertUserMessage,
+  promoteFeedbackToEval,
   releaseRun,
 } from "../db/repos/chat.js";
 import { canonicalFilter } from "../eval/filter-compare.js";
@@ -42,7 +43,7 @@ const CardFeeWire = Schema.Struct({
   isTotal: Schema.Boolean,
 });
 
-const CardWire = Schema.Struct({
+export const CardWire = Schema.Struct({
   listingId: Schema.String,
   courseId: Schema.String,
   courseTitle: Schema.String,
@@ -95,7 +96,13 @@ const FeedbackRequest = Schema.Struct({
   note: Schema.optional(Schema.String),
 });
 
-const FeedbackResponse = Schema.Struct({ ok: Schema.Literal(true) });
+const FeedbackResponse = Schema.Struct({
+  ok: Schema.Literal(true),
+  // §5.5: a thumbs-down promotes the question to a candidate eval_item; the id is
+  // returned so the surface can show "added to the review queue". Null for a thumbs-up
+  // or when there is no answerable question to promote.
+  promotedEvalItemId: Schema.NullOr(Schema.String),
+});
 
 // ── groups ───────────────────────────────────────────────────────────────────────
 export class ChatGroup extends HttpApiGroup.make("chat").add(
@@ -180,13 +187,17 @@ export const chatEffect = (payload: typeof ChatRequest.Type) =>
     };
   });
 
-/** POST /feedback — record thumbs up/down (§5.5). SQL faults `orDie` (500). */
+/** POST /feedback — record thumbs up/down (§5.5). A thumbs-down (`rating === -1`) also
+ * promotes the question to a candidate `eval_item` (the §5.5 loop). SQL faults `orDie`. */
 export const feedbackEffect = (payload: typeof FeedbackRequest.Type) =>
   Effect.gen(function*() {
     yield* insertFeedback(payload.messageId, payload.rating, payload.note ?? null).pipe(
       Effect.orDie,
     );
-    return { ok: true as const };
+    const promoted = payload.rating === -1
+      ? yield* promoteFeedbackToEval(payload.messageId, payload.note ?? null).pipe(Effect.orDie)
+      : Option.none<string>();
+    return { ok: true as const, promotedEvalItemId: Option.getOrNull(promoted) };
   });
 
 // ── SSE route (§10.3) — raw, because HttpApi models one typed body, not a stream ──

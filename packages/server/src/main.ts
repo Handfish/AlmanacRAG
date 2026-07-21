@@ -13,6 +13,7 @@ import { SqlLive } from "./adapters/sql-live.js";
 import { AppConfig } from "./config.js";
 import { ApiLive } from "./http/api.js";
 import { ChatSseRouteLive } from "./http/chat.js";
+import { CompatRoutesLive } from "./http/compat.js";
 import { TelemetryLive } from "./telemetry.js";
 
 // The composition root (plan §6.5) — the ONE file that wires every layer.
@@ -29,9 +30,10 @@ const RetrievalLive = PgKnowledgeBaseLive.pipe(Layer.provide(EmbedderGeminiLive)
 // answerer (structured Answer). Swapping any provider is an edit here (plan §6.5).
 const AgentLive = Layer.mergeAll(RouterGeminiLive, RetrievalLive, AnswererGeminiLive);
 
-// The served app: the typed HttpApi (health/search/chat/feedback) plus the raw SSE
-// route (§10.3). Both draw on the agent ports + SqlClient.
-const AppRoutes = Layer.mergeAll(ApiLive, ChatSseRouteLive);
+// The served app: the typed HttpApi (health/search/relax/chat/feedback) plus the raw
+// SSE route (§10.3) and the OpenAI-compatible compat routes (§10.5). All draw on the
+// agent ports + SqlClient.
+const AppRoutes = Layer.mergeAll(ApiLive, ChatSseRouteLive, CompatRoutesLive);
 
 // The port comes from AppConfig (env PORT, default 3000), so the server layer is
 // built inside an Effect that reads it.

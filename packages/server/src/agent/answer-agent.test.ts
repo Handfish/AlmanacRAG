@@ -78,6 +78,7 @@ const MockKb = (opts: {
         })),
       ),
     filterListings: () => Effect.succeed(opts.listings ?? []),
+    relaxFilter: () => Effect.succeed({ total: 0, relaxations: [] }),
     listingsForCourses: () => Effect.succeed(opts.listings ?? []),
     hydrate: (ids) =>
       Effect.succeed(

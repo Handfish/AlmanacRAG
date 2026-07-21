@@ -1,0 +1,56 @@
+---
+// The product surface (architecture.md §10.5). Server-rendered shell; one vanilla-TS
+// island (lib/app.ts) drives the chat, editable chips (§10.2), zero-result relaxation
+// (§10.3), live-hydrated cards with freshness (§10.4), and feedback (§5.5). Every fact
+// on screen was hydrated from Postgres by the server — the model chose rows, not values.
+const examples = [
+  "evening cybersecurity courses in Newark under $2000",
+  "online grant writing classes",
+  "what math courses are open for registration?",
+  "does the astrophysics course run every year?",
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Almanac — course catalog chat</title>
+    <link rel="stylesheet" href="/styles/global.css" />
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <h1>Almanac</h1>
+        <p class="tagline">
+          The model chooses rows. The database speaks the facts. Prices, dates, and seat
+          status are read live from Postgres at render — never retyped by the assistant.
+        </p>
+      </header>
+
+      <form id="ask" autocomplete="off">
+        <input
+          id="q"
+          name="q"
+          type="text"
+          placeholder="Ask about the catalog — e.g. “evening courses in Newark under $2,000”"
+          aria-label="Ask about the catalog"
+        />
+        <button id="ask-btn" type="submit">Ask</button>
+      </form>
+      <div id="status-line" role="status" aria-live="polite"></div>
+
+      <div class="examples">
+        <span>Examples:</span>
+        {examples.map((ex) => <button class="example" type="button" data-ask={ex}>{ex}</button>)}
+      </div>
+
+      <section id="answer" aria-live="polite"></section>
+    </main>
+
+    <script>
+      import { boot } from "../lib/app";
+      boot();
+    </script>
+  </body>
+</html>

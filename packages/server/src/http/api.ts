@@ -1,4 +1,5 @@
 import { ListingFilter } from "@catalog/domain/filter";
+import type { ListingId } from "@catalog/domain/ids";
 import { KnowledgeBase } from "@catalog/domain/ports/knowledge-base";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,7 +8,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import { chatEffect, ChatGroup, feedbackEffect, FeedbackGroup } from "./chat.js";
+import { CardWire, chatEffect, ChatGroup, feedbackEffect, FeedbackGroup } from "./chat.js";
 
 // The typed HttpApi surface (ADR-I4). Phase 0 shipped GET /health; Phase 3 adds the
 // `search` group — retrieval only, no generation (§16 M3). Phases 5/6 add `chat`
@@ -70,12 +71,58 @@ export class SearchGroup extends HttpApiGroup.make("search").add(
   }),
 ) {}
 
+// ── relax (§10.3) — zero-result relaxation ─────────────────────────────────────
+// When an editable-chip filter (§10.2) matches nothing, POST /relax counts each
+// single-predicate drop so the UI can offer "under $2,000 → 3 results · drop one?".
+// No LLM call — the client already holds the filter and re-runs `filter_listings`
+// with the chosen chip removed. `total` is the current match count (0 is the case
+// that matters); `relaxations` is only populated when `total` is 0 (§10.3).
+
+const RelaxRequest = Schema.Struct({ filter: ListingFilter });
+
+const RelaxationSchema = Schema.Struct({
+  key: Schema.String,
+  label: Schema.String,
+  count: Schema.Int,
+});
+
+const RelaxResponse = Schema.Struct({
+  total: Schema.Int,
+  relaxations: Schema.Array(RelaxationSchema),
+});
+
+export class RelaxGroup extends HttpApiGroup.make("relax").add(
+  HttpApiEndpoint.post("relax", "/relax", {
+    payload: RelaxRequest,
+    success: RelaxResponse,
+  }),
+) {}
+
+// ── hydrate (§10.4, the §1 guarantee) ──────────────────────────────────────────
+// POST /hydrate resolves listing ids → fully live cards (status/fees read at render).
+// The web surface calls this after an editable-chip re-run (§10.2): `/search` returns
+// listing ids, `/hydrate` turns them into the SAME live cards the chat answer shows —
+// so a chip edit yields identical, freshness-stamped results with no LLM call. The
+// model authors nothing here; `why` is empty (there is no answer prose on this path).
+
+const HydrateRequest = Schema.Struct({ listingIds: Schema.Array(Schema.String) });
+const HydrateResponse = Schema.Struct({ cards: Schema.Array(CardWire) });
+
+export class HydrateGroup extends HttpApiGroup.make("hydrate").add(
+  HttpApiEndpoint.post("hydrate", "/hydrate", {
+    payload: HydrateRequest,
+    success: HydrateResponse,
+  }),
+) {}
+
 // The chat + feedback groups (Phase 5, §10) live in `http/chat.ts`; their JSON handlers
 // run the answer agent under the single-active-run lock. The SSE surface (§10.3) is a
 // separate raw route (`ChatSseRouteLive`) merged by `main.ts`.
 export class CatalogApi extends HttpApi.make("catalog")
   .add(HealthGroup)
   .add(SearchGroup)
+  .add(RelaxGroup)
+  .add(HydrateGroup)
   .add(ChatGroup)
   .add(FeedbackGroup)
 {}
@@ -107,6 +154,33 @@ const SearchGroupLive = HttpApiBuilder.group(
       }).pipe(Effect.orDie)),
 );
 
+// Handler for the `relax` group (§10.3). The KnowledgeBase counts the filter and, when
+// empty, each single-predicate drop. SQL faults `orDie` (500).
+const RelaxGroupLive = HttpApiBuilder.group(
+  CatalogApi,
+  "relax",
+  (handlers) =>
+    handlers.handle("relax", ({ payload }) =>
+      Effect.gen(function*() {
+        const kb = yield* KnowledgeBase;
+        return yield* kb.relaxFilter(payload.filter);
+      }).pipe(Effect.orDie)),
+);
+
+// Handler for the `hydrate` group (§10.4). Resolves listing ids → live cards; the model
+// authors nothing (`why` empty). SQL faults `orDie` (500).
+const HydrateGroupLive = HttpApiBuilder.group(
+  CatalogApi,
+  "hydrate",
+  (handlers) =>
+    handlers.handle("hydrate", ({ payload }) =>
+      Effect.gen(function*() {
+        const kb = yield* KnowledgeBase;
+        const cards = yield* kb.hydrate(payload.listingIds.map((id) => id as ListingId));
+        return { cards };
+      }).pipe(Effect.orDie)),
+);
+
 // Handlers for the `chat` + `feedback` groups (Phase 5, §10). The effects live in
 // http/chat.ts; here they bind to the concrete `CatalogApi`. Both require the agent ports
 // + SqlClient, satisfied by `main.ts`.
@@ -128,6 +202,8 @@ const FeedbackGroupLive = HttpApiBuilder.group(
 export const ApiLive = HttpApiBuilder.layer(CatalogApi).pipe(
   Layer.provide(HealthGroupLive),
   Layer.provide(SearchGroupLive),
+  Layer.provide(RelaxGroupLive),
+  Layer.provide(HydrateGroupLive),
   Layer.provide(ChatGroupLive),
   Layer.provide(FeedbackGroupLive),
 );

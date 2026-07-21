@@ -85,8 +85,11 @@ export interface SeedResult {
 const reconcile = (keep: ReadonlySet<string>) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
+    // Only reconcile items the seed OWNS (golden-set-managed, reviewed_by set). A
+    // feedback-promoted candidate (§5.5, reviewed_by NULL) is left alone — it is a
+    // human's curation queue, not the seed's to delete.
     const existing = yield* sql<{ id: string; question: string; }>`
-      SELECT id::text AS id, question FROM eval_item`;
+      SELECT id::text AS id, question FROM eval_item WHERE reviewed_by IS NOT NULL`;
     const orphans = existing.filter((e) => !keep.has(e.question)).map((e) => e.id);
     for (const id of orphans) {
       yield* sql`DELETE FROM eval_result WHERE item_id = ${id}`;

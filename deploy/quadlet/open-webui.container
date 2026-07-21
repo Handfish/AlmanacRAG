@@ -1,0 +1,33 @@
+# Open WebUI as a drop-in chat frontend over the catalog (architecture.md §10.5, §13).
+# "Drops Open WebUI in as another quadlet with zero UI code" — it points at the catalog's
+# OpenAI-compatible `/v1` surface (http/compat.ts) instead of OpenAI, so anyone can chat
+# with the catalog through a familiar UI. It cannot render cards (§10.5): answers arrive
+# as a markdown table, but every fact is still hydrated live from Postgres — the model
+# never retypes a number. The bespoke Astro surface (apps/web) is the product; this is the
+# interop/dogfooding surface.
+#
+# Install: copy this dir to /etc/containers/systemd/ (or ~/.config/containers/systemd/ for
+# rootless), then `systemctl --user daemon-reload && systemctl --user start open-webui`.
+[Unit]
+Description=Open WebUI over the catalog compat API (§10.5)
+After=catalog-api.service
+Wants=catalog-api.service
+
+[Container]
+Image=ghcr.io/open-webui/open-webui:main
+ContainerName=open-webui
+PublishPort=8080:8080
+Network=catalog.network
+# Point Open WebUI's OpenAI client at the catalog's compat surface (§10.5). The key is
+# unused (the catalog does not authenticate this interop surface); WEBUI_AUTH=false skips
+# Open WebUI's own login for a demo. `catalog-api` is the API container's name on the net.
+Environment=OPENAI_API_BASE_URL=http://catalog-api:3000/v1
+Environment=OPENAI_API_KEY=sk-catalog-no-auth
+Environment=WEBUI_AUTH=false
+Volume=open-webui-data:/app/backend/data
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

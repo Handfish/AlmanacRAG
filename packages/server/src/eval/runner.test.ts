@@ -61,6 +61,7 @@ const MockKb = Layer.sync(KnowledgeBase, () => ({
       })),
     ),
   filterListings: () => Effect.succeed([]),
+  relaxFilter: () => Effect.succeed({ total: 0, relaxations: [] }),
   listingsForCourses: () => Effect.succeed([]),
   hydrate: () => Effect.succeed([]),
   observationWindow: () => Effect.succeed({ observingSince: "2026-07-16", termsObserved: 1 }),
@@ -102,12 +103,16 @@ const seedNewarkCourse = Effect.gen(function*() {
   return courseId;
 });
 
+// reviewed_at is set: these are GRADED golden items (the runner scopes to reviewed_at IS
+// NOT NULL so feedback-promoted candidates, §5.5, can't move the gate).
 const seedItem = (q: string, shape: string, filter: string | null, ids: ReadonlyArray<string>) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
     yield* sql`
-      INSERT INTO eval_item (question, shape, expected_filter, expected_ids, rubric)
-      VALUES (${q}, ${shape}, ${filter}::jsonb, ${`{${ids.join(",")}}`}::bigint[], 'test')`;
+      INSERT INTO eval_item (question, shape, expected_filter, expected_ids, rubric,
+                             reviewed_by, reviewed_at)
+      VALUES (${q}, ${shape}, ${filter}::jsonb, ${`{${ids.join(",")}}`}::bigint[], 'test',
+              'test', now())`;
   });
 
 describe("runEval", () => {
@@ -124,6 +129,11 @@ describe("runEval", () => {
         yield* seedItem("tell me about grant writing", "lookup", null, [courseId]);
         // unanswerable: refusal item (no expected ids/filter)
         yield* seedItem("do you offer flying lessons", "unanswerable", null, []);
+        // a feedback-promoted CANDIDATE (§5.5): reviewed_at NULL → must be SKIPPED by the
+        // runner so it can never move the gate.
+        yield* sql`
+          INSERT INTO eval_item (question, shape, rubric)
+          VALUES ('a promoted candidate', 'lookup', 'from feedback')`;
 
         const { runId, results } = yield* runEval({
           today: new Date("2026-07-21"),
@@ -136,6 +146,10 @@ describe("runEval", () => {
         });
 
         const byQ = Object.fromEntries(results.map((r) => [r.question, r]));
+
+        // the un-reviewed candidate was excluded (§5.5) — only the 3 graded items scored
+        expect(results).toHaveLength(3);
+        expect(byQ["a promoted candidate"]).toBeUndefined();
 
         // filtered item: exact match + perfect retrieval of the one Newark course
         expect(byQ["courses in Newark"]!.filterExact).toBe(true);

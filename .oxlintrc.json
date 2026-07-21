@@ -8,6 +8,7 @@
     "**/build",
     "**/dist",
     "**/node_modules",
+    "**/.astro",
     "**/*.gen.ts",
     "reference-scraper",
     "reference-catalog",

@@ -189,10 +189,12 @@ export const runEval = (
   Effect.gen(function*() {
     const sql = yield* SqlClient;
 
+    // Only GRADED items (reviewed_at set) — feedback-promoted candidates (§5.5) stay
+    // reviewed_at NULL until a human curates them, so they can never move the §11.4 gate.
     const items = yield* sql<ItemRow>`
       SELECT id::text AS id, question, shape, band, expected_filter,
              expected_ids::text[] AS expected_ids, rubric
-      FROM eval_item ORDER BY id`;
+      FROM eval_item WHERE reviewed_at IS NOT NULL ORDER BY id`;
 
     const config = {
       today: cfg.today.toISOString().slice(0, 10),

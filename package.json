@@ -14,6 +14,9 @@
     "test": "vitest run",
     "migrate": "pnpm --filter @catalog/server migrate",
     "dev:server": "pnpm --filter @catalog/server dev",
+    "dev:web": "pnpm --filter @catalog/web dev",
+    "build:web": "pnpm --filter @catalog/web build",
+    "check:web": "pnpm --filter @catalog/web check",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "seed": "pnpm --filter @catalog/server migrate && pnpm --filter @catalog/server crawl && pnpm --filter @catalog/server extract:sync && pnpm --filter @catalog/server index && pnpm --filter @catalog/server eval:seed"

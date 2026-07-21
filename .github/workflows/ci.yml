@@ -22,6 +22,8 @@ jobs:
         run: pnpm exec dprint check
       - name: Typecheck
         run: pnpm exec tsc -b
+      - name: Typecheck web (Astro)
+        run: pnpm check:web
       - name: Lint
         run: pnpm lint
       - name: Test (unit + testcontainer spine)

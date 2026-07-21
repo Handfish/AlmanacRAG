@@ -1,0 +1,4 @@
+# Rootless Podman network shared by the catalog units (architecture.md §13). The compat
+# surface (§10.5) and Open WebUI talk over this so container names resolve as hostnames.
+[Network]
+NetworkName=catalog

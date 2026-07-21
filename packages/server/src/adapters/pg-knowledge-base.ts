@@ -8,6 +8,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { filterListings } from "../retrieval/filter-listings.js";
 import { hybridRrf } from "../retrieval/hybrid-rrf.js";
 import { hydrateCards, listingsForCourses, readObservationWindow } from "../retrieval/hydrate.js";
+import { relaxFilter } from "../retrieval/relax.js";
 
 // The KnowledgeBase adapter (architecture.md §7, Phase 3) — the retrieval port over
 // Postgres. `search` embeds the query (RETRIEVAL_QUERY), resolves the active model
@@ -53,6 +54,14 @@ export const PgKnowledgeBaseLive = Layer.effect(
           Effect.provideService(SqlClient, sql),
           Effect.mapError((cause) =>
             new KnowledgeBaseError({ message: "filterListings failed", cause })
+          ),
+        ),
+
+      relaxFilter: (filter) =>
+        relaxFilter(filter).pipe(
+          Effect.provideService(SqlClient, sql),
+          Effect.mapError((cause) =>
+            new KnowledgeBaseError({ message: "relaxFilter failed", cause })
           ),
         ),
 

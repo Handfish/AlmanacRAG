@@ -8,7 +8,7 @@
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white">
   <img alt="pgvector" src="https://img.shields.io/badge/pgvector-halfvec-4169E1">
   <img alt="Anthropic" src="https://img.shields.io/badge/Claude-Haiku%2FSonnet-D97757">
-  <img alt="tests" src="https://img.shields.io/badge/tests-48%20green-2ea44f">
+  <img alt="tests" src="https://img.shields.io/badge/tests-120%20green-2ea44f">
 </p>
 
 Almanac turns a public university continuing-education catalog into a chat interface you can _trust with a price_. It is a deliberate answer to the failure mode of most retrieval-augmented chatbots: the language model reads a retrieved document, retypes a number, and quietly gets it wrong. Here that is structurally impossible — the model never emits a fact.
@@ -152,7 +152,8 @@ Measuring first, then writing down which of your own arguments the data destroye
 - **Effect v4** — typed errors, dependency injection via `Layer`, durable workflows, `HttpApi`, `Schema` as the single source of truth for both wire types and DB decode. Pinned to one exact beta (`4.0.0-beta.99`); the whole `@effect/*` ecosystem now lives under `effect/unstable/*`.
 - **PostgreSQL 16 + pgvector** — one database does structured filtering, full-text (BM25 via `tsvector`), and vector search (`halfvec`). Dual clients: pooled through PgBouncer for queries, a direct admin connection for DDL only.
 - **Anthropic Claude** — Haiku-class for extraction and chunk-context (a full extraction pass over 995 pages costs ~$4), Sonnet-class for the chat router.
-- **Testing** — `@effect/vitest` + Testcontainers (real Postgres per suite, transaction-rollback isolation). 48 tests green across `tsc` · `oxlint` · `dprint` · `vitest`, run in CI.
+- **Web** — Astro 5 + a lean vanilla-TS island importing the domain contracts (`Card`/`ListingFilter`), calling the server's JSON endpoints. Editable filter chips re-run with no LLM call; a second OpenAI-compatible `/v1` surface drops into Open WebUI.
+- **Testing** — `@effect/vitest` + Testcontainers (real Postgres per suite, transaction-rollback isolation). 120 tests green across `tsc` · `oxlint` · `dprint` · `vitest` · `astro check`, run in CI.
 
 ---
 
@@ -167,8 +168,8 @@ Honest and current — this is a system being built in phases against a live sou
 | 2 · Extraction           | One-schema typed extractor + 13 hazard tests + field-level change logging; **994 pages extracted → 731 courses / 2,016 fees / 213 relations** (Gemini)                                   | ✅ shipped                          |
 | 3 · Retrieval            | Chunk + embed, hybrid RRF search, exact-scan kNN; **731 chunks+embeddings indexed, `/search` live, exact-scan p50 ~4 ms** (ADR-004 confirmed)                                            | ✅ shipped                          |
 | 4 · Eval harness         | 87-item golden set (7 shapes) + runner + §11.4 CI gate — _before_ the chat UI. **`filter_exact` 100% · nDCG@10 0.99 · refusal 100% · 0 fee-×100 errors**                                 | ✅ shipped                          |
-| 5 · Chat & hydration     | Router, five tools, the `CardRef → Card` hydration guarantee, SSE streaming                                                                                                              | ▷ designed                          |
-| 6 · Web UI               | Astro + effect-atom; editable filter chips                                                                                                                                               | ▷ designed                          |
+| 5 · Chat & hydration     | Router, the `CardRef → Card` hydration guarantee, SSE typed events, grounded refusal, single-active-run; **`prose_faithful` ~81%** (LlmJudge)                                            | ✅ shipped                          |
+| 6 · Web UI               | Astro + vanilla-TS: cards, **editable filter chips** (re-run with no LLM), zero-result relaxation, freshness, feedback→eval; **OpenAI-compatible `/v1`** + Open WebUI quadlet            | ✅ shipped                          |
 | 7 · History querying     | `course_history` over the accrued retention window                                                                                                                                       | ▷ designed                          |
 
 The [architecture document](./architecture.md) is the authoritative artifact and carries the full reasoning, DDL, ADRs, and eval design.
@@ -206,7 +207,8 @@ pnpm db:up                    # docker compose up -d (named volume: data survive
 pnpm seed                     # migrate → crawl → extract:sync → index → eval:seed
 
 # 4. Run it
-pnpm dev:server               # boot main.ts → GET /health
+pnpm dev:server               # boot main.ts → GET /health, POST /chat, /search, /relax, /hydrate, /v1/*
+pnpm dev:web                  # Astro product UI on :4321 (proxies /api/* → :3000) — cards, chips, relaxation
 ```
 
 Then verify:

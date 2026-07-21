@@ -1,6 +1,7 @@
 import type { ListingFilter } from "@catalog/domain/filter";
 import type { FilteredListing } from "@catalog/domain/ports/knowledge-base";
 import * as Effect from "effect/Effect";
+import type { SqlClient as SqlClientShape } from "effect/unstable/sql/SqlClient";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { Fragment } from "effect/unstable/sql/Statement";
 
@@ -17,49 +18,80 @@ import type { Fragment } from "effect/unstable/sql/Statement";
 
 const isoDate = (date: Date): string => date.toISOString().slice(0, 10);
 
+/** The list of `ListingFilter` predicate keys that participate in relaxation (§10.3) —
+ * `includeGone` is a visibility toggle, not a user-facing constraint, so it is excluded.
+ * Keeping this list next to the compilation keeps the two in lockstep. */
+export const RELAXABLE_KEYS = [
+  "campus",
+  "deliveryMode",
+  "status",
+  "isEvening",
+  "term",
+  "program",
+  "ceccUnit",
+  "maxFeeCents",
+  "minFeeCents",
+  "minHours",
+  "maxHours",
+  "startsAfter",
+  "startsBefore",
+  "openForReg",
+] as const satisfies ReadonlyArray<keyof ListingFilter>;
+
+/** Compile a `ListingFilter` to the shared WHERE fragments (§8.4). The `l`/`co`/`u`
+ * aliases (`listing`/`course`/`unit`) must exist in the caller's FROM — both
+ * `filterListings` and `countListings` (§10.3 relaxation) join the same three tables. */
+export const filterConds = (
+  sql: SqlClientShape,
+  filter: ListingFilter,
+): Array<Fragment> => {
+  const conds: Array<Fragment> = [];
+
+  if (filter.includeGone !== true) conds.push(sql`l.disappeared_at IS NULL`);
+  if (filter.campus !== undefined) conds.push(sql`l.campus = ${filter.campus}`);
+  if (filter.deliveryMode !== undefined) {
+    conds.push(sql`l.delivery_mode = ${filter.deliveryMode}`);
+  }
+  if (filter.status !== undefined) conds.push(sql`l.status = ${filter.status}`);
+  if (filter.isEvening !== undefined) conds.push(sql`l.is_evening = ${filter.isEvening}`);
+  if (filter.term !== undefined) conds.push(sql`l.term = ${filter.term}`);
+  if (filter.program !== undefined) conds.push(sql`co.program = ${filter.program}`);
+  if (filter.ceccUnit !== undefined) conds.push(sql`u.name = ${filter.ceccUnit}`);
+
+  if (filter.maxFeeCents !== undefined) {
+    conds.push(sql`l.total_fee_cents IS NOT NULL AND l.total_fee_cents <= ${filter.maxFeeCents}`);
+  }
+  if (filter.minFeeCents !== undefined) {
+    conds.push(sql`l.total_fee_cents IS NOT NULL AND l.total_fee_cents >= ${filter.minFeeCents}`);
+  }
+  if (filter.minHours !== undefined) {
+    conds.push(sql`co.contact_hours IS NOT NULL AND co.contact_hours >= ${filter.minHours}`);
+  }
+  if (filter.maxHours !== undefined) {
+    conds.push(sql`co.contact_hours IS NOT NULL AND co.contact_hours <= ${filter.maxHours}`);
+  }
+  if (filter.startsAfter !== undefined) {
+    conds.push(
+      sql`l.starts_on IS NOT NULL AND l.starts_on >= ${isoDate(filter.startsAfter)}::date`,
+    );
+  }
+  if (filter.startsBefore !== undefined) {
+    conds.push(
+      sql`l.starts_on IS NOT NULL AND l.starts_on < ${isoDate(filter.startsBefore)}::date`,
+    );
+  }
+  // registration still open: no stated deadline, or the deadline has not passed.
+  if (filter.openForReg === true) {
+    conds.push(sql`(l.registration_deadline IS NULL OR l.registration_deadline >= CURRENT_DATE)`);
+  }
+
+  return conds;
+};
+
 export const filterListings = (filter: ListingFilter, limit: number) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
-    const conds: Array<Fragment> = [];
-
-    if (filter.includeGone !== true) conds.push(sql`l.disappeared_at IS NULL`);
-    if (filter.campus !== undefined) conds.push(sql`l.campus = ${filter.campus}`);
-    if (filter.deliveryMode !== undefined) {
-      conds.push(sql`l.delivery_mode = ${filter.deliveryMode}`);
-    }
-    if (filter.status !== undefined) conds.push(sql`l.status = ${filter.status}`);
-    if (filter.isEvening !== undefined) conds.push(sql`l.is_evening = ${filter.isEvening}`);
-    if (filter.term !== undefined) conds.push(sql`l.term = ${filter.term}`);
-    if (filter.program !== undefined) conds.push(sql`co.program = ${filter.program}`);
-    if (filter.ceccUnit !== undefined) conds.push(sql`u.name = ${filter.ceccUnit}`);
-
-    if (filter.maxFeeCents !== undefined) {
-      conds.push(sql`l.total_fee_cents IS NOT NULL AND l.total_fee_cents <= ${filter.maxFeeCents}`);
-    }
-    if (filter.minFeeCents !== undefined) {
-      conds.push(sql`l.total_fee_cents IS NOT NULL AND l.total_fee_cents >= ${filter.minFeeCents}`);
-    }
-    if (filter.minHours !== undefined) {
-      conds.push(sql`co.contact_hours IS NOT NULL AND co.contact_hours >= ${filter.minHours}`);
-    }
-    if (filter.maxHours !== undefined) {
-      conds.push(sql`co.contact_hours IS NOT NULL AND co.contact_hours <= ${filter.maxHours}`);
-    }
-    if (filter.startsAfter !== undefined) {
-      conds.push(
-        sql`l.starts_on IS NOT NULL AND l.starts_on >= ${isoDate(filter.startsAfter)}::date`,
-      );
-    }
-    if (filter.startsBefore !== undefined) {
-      conds.push(
-        sql`l.starts_on IS NOT NULL AND l.starts_on < ${isoDate(filter.startsBefore)}::date`,
-      );
-    }
-    // registration still open: no stated deadline, or the deadline has not passed.
-    if (filter.openForReg === true) {
-      conds.push(sql`(l.registration_deadline IS NULL OR l.registration_deadline >= CURRENT_DATE)`);
-    }
-
+    const conds = filterConds(sql, filter);
     const where = conds.length > 0 ? sql`WHERE ${sql.and(conds)}` : sql``;
 
     return yield* sql<FilteredListing>`
@@ -85,4 +117,21 @@ export const filterListings = (filter: ListingFilter, limit: number) =>
       ORDER BY l.term_rank DESC, l.id
       LIMIT ${limit}
     `;
+  });
+
+/** Count the listings a `ListingFilter` matches — the counting half of §10.3 zero-result
+ * relaxation. Same joins/predicates as `filterListings`, just `COUNT(*)` (no LIMIT). */
+export const countListings = (filter: ListingFilter) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient;
+    const conds = filterConds(sql, filter);
+    const where = conds.length > 0 ? sql`WHERE ${sql.and(conds)}` : sql``;
+    const rows = yield* sql<{ n: number; }>`
+      SELECT count(*)::int AS n
+      FROM listing l
+      JOIN course co ON co.id = l.course_id
+      LEFT JOIN unit u ON u.id = co.unit_id
+      ${where}
+    `;
+    return rows[0]?.n ?? 0;
   });

@@ -19,6 +19,21 @@ export type SearchHit = {
   readonly courseTitle: string | null;
 };
 
+/** How many results a single dropped predicate would surface — the §10.3 "drop one?"
+ * menu. Built by relaxing one `ListingFilter` key at a time and counting. */
+export type Relaxation = {
+  readonly key: string;
+  readonly label: string;
+  readonly count: number;
+};
+
+/** Zero-result relaxation (§10.3): matches for the filter as-is, plus, when that is 0,
+ * the per-predicate counts of dropping one constraint at a time (best-first). */
+export type RelaxResult = {
+  readonly total: number;
+  readonly relaxations: ReadonlyArray<Relaxation>;
+};
+
 /** A listing that passed a `ListingFilter`. Lean projection — the full card is
  * hydrated live at render (§10.4), a Phase-5 concern. */
 export type FilteredListing = {
@@ -47,6 +62,11 @@ export type KnowledgeBaseShape = {
     filter: ListingFilter,
     limit: number,
   ) => Effect.Effect<ReadonlyArray<FilteredListing>, KnowledgeBaseError>;
+  /** Zero-result relaxation (§10.3): count the filter as-is and, when empty, count each
+   * single-predicate drop — the "drop one?" affordance that turns a dead search useful. */
+  readonly relaxFilter: (
+    filter: ListingFilter,
+  ) => Effect.Effect<RelaxResult, KnowledgeBaseError>;
   // ── Phase 5 (the answer path) ──────────────────────────────────────────────
   /** The current live listing for each course id (most recent term, `disappeared_at
    * IS NULL`) — turns `search` course hits into candidate listings for the answer
