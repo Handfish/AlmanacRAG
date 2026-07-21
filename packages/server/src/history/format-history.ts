@@ -23,7 +23,6 @@ export type HistoryVerdict =
 export interface HistoryAnswer {
   readonly verdict: HistoryVerdict;
   readonly prose: string;
-  readonly followups: ReadonlyArray<string>;
 }
 
 const MONTHS = [
@@ -81,14 +80,10 @@ const feeTrajectory = (terms: ReadonlyArray<TermRun>): string | null => {
   return `The fee has ${dir} from ${$a} in ${first.term} to ${$b} in ${last.term}.`;
 };
 
-const HISTORY_FOLLOWUPS: ReadonlyArray<string> = [
-  "Show me the current offering",
-  "What does the course cover?",
-];
-
 /**
  * Compose an honest temporal answer from a `course_history` result. `courseName` is what the
- * user asked about, used in the not-found and single-term prose. Pure and total.
+ * user asked about, used in the not-found and single-term prose. Pure and total. (Follow-up
+ * suggestions are derived by the agent, not here — they need the resolved course title.)
  */
 export const composeHistory = (
   history: CourseHistory | null,
@@ -99,7 +94,6 @@ export const composeHistory = (
       verdict: "not_found",
       prose:
         `I couldn't find a course matching "${courseName}" in the catalog, so I have no history to share for it.`,
-      followups: [],
     };
   }
 
@@ -118,7 +112,6 @@ export const composeHistory = (
         verdict: "insufficient",
         prose:
           `${seenClause}. I've only been watching this catalog since ${since}, so I can't yet tell you whether it runs regularly or when it will next be offered.`,
-        followups: HISTORY_FOLLOWUPS,
       };
     }
     // No dated term at all — we can't even place it on the calendar.
@@ -126,7 +119,6 @@ export const composeHistory = (
       verdict: "insufficient",
       prose:
         `I don't have a dated term on record for the ${history.courseTitle}, and I've only been watching this catalog since ${since} — so I can't tell you how often it runs or when it's next offered.`,
-      followups: HISTORY_FOLLOWUPS,
     };
   }
 
@@ -154,6 +146,5 @@ export const composeHistory = (
   return {
     verdict: "grounded",
     prose: parts.join(" "),
-    followups: HISTORY_FOLLOWUPS,
   };
 };

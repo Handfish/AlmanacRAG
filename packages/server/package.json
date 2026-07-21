@@ -15,6 +15,9 @@
     "search": "tsx src/main-search.ts",
     "eval:seed": "tsx src/main-eval-seed.ts",
     "eval": "tsx src/main-eval.ts",
+    "ablate:prep": "tsx src/main-ablate-prep.ts",
+    "ablate": "tsx src/main-ablate.ts",
+    "crossover": "tsx src/main-crossover.ts",
     "chat": "tsx src/main-chat.ts",
     "synth:history": "tsx src/main-synth-history.ts",
     "benchmark:fetch": "tsx src/ingest/benchmark.ts"

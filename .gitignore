@@ -22,7 +22,7 @@ coverage/
 
 # ── reference repos (each carries its own .git; kept on disk, not tracked) ────
 # See docs/initial-architecture-plan-1.md §4.1.
-reference-scraper/
-reference-catalog/
 reference-ai-chat/
 reference-ai-lib/
+.agents
+.claude

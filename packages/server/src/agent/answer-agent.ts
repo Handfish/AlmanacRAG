@@ -64,10 +64,13 @@ const toCandidate = (l: FilteredListing): AnswerCandidate => ({
 });
 
 /** §8 decomposition: run the two independent halves and intersect on course_id. Returns
- * candidate listings, best-first, capped. */
+ * candidate listings, best-first, capped. `excludeAnchor` drops the single top search hit —
+ * used for cross-course discovery ("courses similar to X"), where the top hit is X itself and
+ * we want the OTHER courses, not a re-render of the same card. */
 const retrieve = (
   filter: ListingFilter | null,
   searchQuery: string | null,
+  excludeAnchor: boolean = false,
 ): Effect.Effect<ReadonlyArray<FilteredListing>, KnowledgeBaseError, KnowledgeBase> =>
   Effect.gen(function*() {
     const kb = yield* KnowledgeBase;
@@ -77,7 +80,10 @@ const retrieve = (
     let searched: ReadonlyArray<FilteredListing> = [];
     let searchOrder: ReadonlyArray<string> = [];
     if (searchQuery !== null) {
-      const hits = yield* kb.search(searchQuery, SEARCH_K);
+      let hits = yield* kb.search(searchQuery, SEARCH_K);
+      // Discovery: the best hit for "similar to X" is X — drop it so the result is the
+      // NEIGHBOURS, not the anchor course again. Guarded so we never return an empty set.
+      if (excludeAnchor && hits.length > 1) hits = hits.slice(1);
       searchOrder = hits.map((h) => h.courseId as string);
       searched = yield* kb.listingsForCourses(hits.map((h) => h.courseId as CourseId), 1);
     }
@@ -114,12 +120,49 @@ const retrieve = (
     return out as ReadonlyArray<FilteredListing>;
   });
 
+const DISCOVERY_RE = /\b(similar to|courses like|related to|more like)\b/i;
+
+/** A "cross-course discovery" question ("courses similar to X") — offered as a follow-up so
+ * the user can jump from one course to related ones. On these, the agent drops the anchor
+ * course from the results (retrieve `excludeAnchor`) so it lands on OTHER courses, not the
+ * same card again. Matches our own generated follow-up text, and a user's natural phrasing. */
+const isDiscoveryQuery = (question: string): boolean => DISCOVERY_RE.test(question);
+
+/** Self-contained, provably-answerable follow-up suggestions, derived deterministically from
+ * the answer — never model-authored. The agent is STATELESS (no conversation memory), so a
+ * follow-up MUST name its own subject: "What are the prerequisites?" has nothing to resolve
+ * "it" against when it's clicked and sent as a fresh question. Every suggestion is one we can
+ * actually take somewhere NEW — the card doesn't already show it:
+ *   • history pivot ("How often has X run?") → the term timeline, a facet the card lacks;
+ *   • discovery ("courses similar to X")     → a DIFFERENT set of courses (anchor dropped).
+ * (Content/prereq follow-ups were removed: the card carries no description or prerequisites,
+ * so they only re-rendered the same card — the very complaint this fixes.) `courseTitle` is
+ * null when there is no single course subject (a refusal, or a broad multi-course result),
+ * and then we offer nothing rather than a follow-up we can't take anywhere. */
+const deriveFollowups = (
+  courseTitle: string | null,
+  isHistory: boolean,
+): ReadonlyArray<string> =>
+  courseTitle === null
+    ? []
+    : isHistory
+    // The temporal facet is already answered — only offer the jump to other courses.
+    ? [`Show me courses similar to ${courseTitle}`]
+    // A single-course answer — the one new facet (history) + a jump to other courses.
+    : [`How often has the ${courseTitle} run?`, `Show me courses similar to ${courseTitle}`];
+
+/** The one course a set of hydrated cards is about, or null if they span multiple courses (a
+ * broad filtered result has no single subject to pivot a follow-up on). */
+const singleCourseTitle = (cards: ReadonlyArray<Card>): string | null => {
+  const ids = new Set(cards.map((c) => c.courseId as string));
+  return ids.size === 1 ? cards[0]!.courseTitle : null;
+};
+
 // ── History (§8.1 / §5.3.5 / §10.6, Phase 7) ─────────────────────────────────────
 export interface HistoryResult {
   readonly history: CourseHistory | null;
   readonly verdict: HistoryVerdict;
   readonly prose: string;
-  readonly followups: ReadonlyArray<string>;
   readonly courseId: CourseId | null;
 }
 
@@ -138,13 +181,7 @@ export const answerHistory = (
     const courseId = hits[0]?.courseId ?? null;
     const history = courseId === null ? null : yield* kb.courseHistory(courseId);
     const composed = composeHistory(history, historyQuery);
-    return {
-      history,
-      verdict: composed.verdict,
-      prose: composed.prose,
-      followups: composed.followups,
-      courseId,
-    };
+    return { history, verdict: composed.verdict, prose: composed.prose, courseId };
   });
 
 /** Run the full agent for one question. `today` is passed explicitly (not read from the
@@ -177,7 +214,8 @@ export const run = (
         prose: h.prose,
         cards: cardRefs,
         filter: null,
-        followups: h.followups,
+        // Self-contained follow-ups naming the resolved course (never the model's).
+        followups: deriveFollowups(h.history?.courseTitle ?? null, true),
       });
       const window = h.history?.window ?? (yield* kb.observationWindow());
       return {
@@ -189,24 +227,30 @@ export const run = (
       } satisfies AnswerResult;
     }
 
+    // Cross-course discovery ("courses similar to X"): drop the anchor course so a "similar"
+    // follow-up lands on OTHER courses instead of re-showing the one the user came from.
     const candidates = route.refuse
       ? []
-      : (yield* retrieve(route.filter, route.searchQuery)).map(toCandidate);
+      : (yield* retrieve(route.filter, route.searchQuery, isDiscoveryQuery(question)))
+        .map(toCandidate);
 
     const composed = yield* answerer.answer(question, candidates);
-    // Echo the router's filter as the chips (§10.2) — authoritative, not the answerer's.
+
+    // Hydrate the chosen cards LIVE and attach the model's one-line `why` (§10.4/§4.2).
+    const whyByListing = new Map(composed.cards.map((c) => [c.listingId as string, c.why]));
+    const chosenIds = composed.cards.map((c) => c.listingId as ListingId);
+    const hydrated = yield* kb.hydrate(chosenIds);
+    const cards = hydrated.map((c): Card => ({ ...c, why: whyByListing.get(c.listingId) ?? "" }));
+
+    // Echo the router's filter as the chips (§10.2). Follow-ups are self-contained and
+    // derived from the hydrated cards (not the model's) — offered only when the answer is
+    // about a single course, so clicking one is a question the stateless agent can answer.
     const answer = new AnswerClass({
       prose: composed.prose,
       cards: composed.cards,
       filter: route.filter,
-      followups: composed.followups,
+      followups: deriveFollowups(singleCourseTitle(cards), false),
     });
-
-    // Hydrate the chosen cards LIVE and attach the model's one-line `why` (§10.4/§4.2).
-    const whyByListing = new Map(answer.cards.map((c) => [c.listingId as string, c.why]));
-    const chosenIds = answer.cards.map((c) => c.listingId as ListingId);
-    const hydrated = yield* kb.hydrate(chosenIds);
-    const cards = hydrated.map((c): Card => ({ ...c, why: whyByListing.get(c.listingId) ?? "" }));
 
     const window = yield* kb.observationWindow();
 

@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 // from Postgres afterward (§10.4). Grounded refusal (§10.6) is an answer with empty cards.
 
 /** Bumped when the prompt or answer schema changes; recorded in `eval_run.config`. */
-export const ANSWERER_VERSION = "answerer-v2"; // v2: forbid over-characterizing varied result sets
+export const ANSWERER_VERSION = "answerer-v3"; // v3: followups moved out of the model (agent derives them)
 
 export const SYSTEM =
   `You are the answer composer for a Rutgers continuing-education course catalog. You are given a user question and a list of CANDIDATE course listings that retrieval already selected. Your ONLY job is to choose which candidates actually answer the question, write ONE short line explaining each, and write brief connective prose.
@@ -23,11 +23,10 @@ Hard rules (a violation is a system failure):
 - prose is 1–2 sentences of connective tissue ("Two sections match — " / "The closest options:"). No lists of facts.
 - Do NOT characterize the SET beyond what is actually common to the cards you return. If the courses span different subjects (e.g. water operations, GIS, test prep), do not label them all as one theme ("test preparation courses", "leadership programs") — that is an unfaithful claim. When the results are varied, say so plainly ("A range of evening courses match:") or describe only the shared trait the question asked about (that they are evenings/online/in Newark). Every adjective in the prose must be true of EVERY card listed.
 - Order cards best-first.
-- followups: 0–3 short natural next questions the user might ask. Optional.
 
 Grounded refusal (§10.6): if NONE of the candidates answer the question, or the candidate list is empty, return an EMPTY cards array and prose that honestly says you could not find a match in the catalog. Do not pad with irrelevant cards. It is correct and expected to return zero cards when nothing fits.
 
-Output ONLY the JSON object: { "prose": string, "cards": [{ "listingId": string, "why": string }], "followups": [string] }.`;
+Output ONLY the JSON object: { "prose": string, "cards": [{ "listingId": string, "why": string }] }.`;
 
 // ── Gemini OpenAPI-subset response schema (a generation hint; decode is truth) ──
 type G = Record<string, unknown>;
@@ -48,10 +47,9 @@ export const ANSWER_RESPONSE_SCHEMA: G = {
         nullable: false,
       },
     },
-    followups: { type: "ARRAY", nullable: false, items: str },
   },
-  required: ["prose", "cards", "followups"],
-  propertyOrdering: ["prose", "cards", "followups"],
+  required: ["prose", "cards"],
+  propertyOrdering: ["prose", "cards"],
   nullable: false,
 };
 
@@ -74,15 +72,17 @@ const get = (o: unknown, k: string): unknown =>
   typeof o === "object" && o !== null && k in o ? (o as Record<string, unknown>)[k] : undefined;
 
 const asString = (v: unknown): string => (typeof v === "string" ? v : "");
-const asStringArray = (v: unknown): ReadonlyArray<string> =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
 /**
  * Turn a raw answerer response into a typed, GROUNDED `Answer`. Cards are kept only when
  * their `listingId` is in `allowedIds` (the candidate set) — a hallucinated id is dropped,
  * not surfaced (the §1/ADR-008 grounding guarantee, defended here even though the schema
  * constrains output). `filter` is left null; the agent echoes the router's filter as the
- * chips (§10.2). Total and pure: a malformed field degrades, never throws.
+ * chips (§10.2). `followups` is left EMPTY — the model no longer suggests next questions
+ * (answerer-v3): a model-invented followup is an ungrounded PROMISE the stateless agent
+ * often can't keep ("What are the prerequisites?" has no subject and no memory to resolve
+ * it against). The agent derives self-contained, provably-answerable followups instead
+ * (agent/answer-agent.ts `deriveFollowups`). Total and pure: a malformed field degrades.
  */
 export const decodeAnswer = (raw: unknown, allowedIds: ReadonlySet<string>): Answer => {
   const prose = asString(get(raw, "prose"));
@@ -98,10 +98,6 @@ export const decodeAnswer = (raw: unknown, allowedIds: ReadonlySet<string>): Ans
       cards.push(new CardRef({ listingId: Schema.decodeSync(ListingId)(id), why }));
     }
   }
-  const followups = asStringArray(get(raw, "followups"))
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0)
-    .slice(0, 3);
 
-  return new Answer({ prose, cards, filter: null, followups });
+  return new Answer({ prose, cards, filter: null, followups: [] });
 };

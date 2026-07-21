@@ -81,7 +81,14 @@ const MockKb = (opts: {
       ),
     filterListings: () => Effect.succeed(opts.listings ?? []),
     relaxFilter: () => Effect.succeed({ total: 0, relaxations: [] }),
-    listingsForCourses: () => Effect.succeed(opts.listings ?? []),
+    // Respect the requested course ids (in input order) — so discovery's anchor-exclusion
+    // is observable in the returned candidates, like the real adapter.
+    listingsForCourses: (courseIds) =>
+      Effect.succeed(
+        courseIds.flatMap((id) =>
+          (opts.listings ?? []).filter((l) => (l.courseId as string) === (id as string))
+        ),
+      ),
     hydrate: (ids) =>
       Effect.succeed(
         (opts.cards ?? []).filter((c) =>
@@ -134,6 +141,12 @@ describe("answer-agent", () => {
       expect(c.why).toBe("matches your grant-writing topic");
       // Router's filter (null here) is echoed, not the answerer's.
       expect(result.answer.filter).toBe(null);
+      // Follow-ups are self-contained and each go somewhere NEW (a facet the card lacks, or
+      // other courses) — NOT the model's, and never a same-card re-render.
+      expect(result.answer.followups).toEqual([
+        "How often has the Grant Writing I run?",
+        "Show me courses similar to Grant Writing I",
+      ]);
     }).pipe(
       Effect.provide(
         MockRouter(
@@ -159,6 +172,48 @@ describe("answer-agent", () => {
         search: ["7"],
         listings: [listing("100", "7", "Grant Writing I")],
         cards: [card("100", "7", "Grant Writing I", 41500)],
+      })),
+    ));
+
+  it.effect("a 'similar to' discovery query drops the anchor course → OTHER courses surface", () =>
+    Effect.gen(function*() {
+      // Search ranks the named course (7) first, then neighbours (8, 9). Discovery must
+      // exclude 7 so the follow-up lands somewhere new, not on the same card.
+      const result = yield* Agent.run("Show me courses similar to Grant Writing I", TODAY);
+      const courseIds = new Set(result.cards.map((c) => c.courseId as string));
+      expect(courseIds.has("7")).toBe(false); // the anchor is gone
+      expect(courseIds.has("8")).toBe(true); // a neighbour surfaces
+    }).pipe(
+      Effect.provide(
+        MockRouter(
+          new RouteDecision({
+            filter: null,
+            searchQuery: "Grant Writing I",
+            historyQuery: null,
+            refuse: false,
+          }),
+        ),
+      ),
+      Effect.provide(MockAnswerer((candidates) =>
+        new Answer({
+          prose: "Related options:",
+          cards: candidates.map((c) => new CardRef({ listingId: c.listingId, why: "related" })),
+          filter: null,
+          followups: [],
+        })
+      )),
+      Effect.provide(MockKb({
+        search: ["7", "8", "9"], // 7 is the anchor (top hit for the named course)
+        listings: [
+          listing("100", "7", "Grant Writing I"),
+          listing("200", "8", "Grant Writing II"),
+          listing("300", "9", "Fundraising Basics"),
+        ],
+        cards: [
+          card("100", "7", "Grant Writing I", 1000),
+          card("200", "8", "Grant Writing II", 2000),
+          card("300", "9", "Fundraising Basics", 3000),
+        ],
       })),
     ));
 
@@ -227,6 +282,10 @@ describe("answer-agent", () => {
       const tags = Agent.answerEvents(result).map((e) => e._tag);
       expect(tags).toContain("history");
       expect(tags.indexOf("history")).toBeLessThan(tags.indexOf("window"));
+      // the temporal facet is already answered — the only follow-up jumps to OTHER courses
+      expect(result.answer.followups).toEqual([
+        "Show me courses similar to PMP Certification Program",
+      ]);
     }).pipe(
       Effect.provide(HistoryRoute),
       Effect.provide(

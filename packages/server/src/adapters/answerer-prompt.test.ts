@@ -70,14 +70,16 @@ describe("decodeAnswer — ADR-008 grounding", () => {
     expect(answer.filter).toBe(null); // the agent echoes the router's filter, not the answerer's
   });
 
-  it("trims and caps followups at 3", () => {
+  it("never surfaces model-authored followups — the agent derives them (answerer-v3)", () => {
+    // Even if the model emits followups, decode drops them: a model-invented follow-up is an
+    // ungrounded promise the stateless agent can't keep. The agent supplies self-contained
+    // ones (deriveFollowups). So the decoded answer always carries an empty followups array.
     const raw = {
       prose: "",
-      cards: [],
-      followups: ["  a  ", "b", "", "c", "d"],
+      cards: [{ listingId: "10", why: "x" }],
+      followups: ["What are the prerequisites?", "Is it offered in person?"],
     };
-    const answer = decodeAnswer(raw, new Set());
-    expect(answer.followups).toEqual(["a", "b", "c"]);
+    expect(decodeAnswer(raw, allowed).followups).toEqual([]);
   });
 
   it("survives a malformed response (missing fields) without throwing", () => {
