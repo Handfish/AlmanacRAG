@@ -1,4 +1,7 @@
+import { Answer } from "@catalog/domain/answer";
 import { ListingFilter } from "@catalog/domain/filter";
+import { Answerer } from "@catalog/domain/ports/answerer";
+import { Judge } from "@catalog/domain/ports/judge";
 import { KnowledgeBase } from "@catalog/domain/ports/knowledge-base";
 import { RouteDecision, Router } from "@catalog/domain/ports/router";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -58,13 +61,25 @@ const MockKb = Layer.sync(KnowledgeBase, () => ({
       })),
     ),
   filterListings: () => Effect.succeed([]),
+  listingsForCourses: () => Effect.succeed([]),
+  hydrate: () => Effect.succeed([]),
+  observationWindow: () => Effect.succeed({ observingSince: "2026-07-16", termsObserved: 1 }),
+}));
+
+// Answerer + Judge are required by the runner's type (the prose pass), but with
+// evalProse:false they are never called — trivial stubs satisfy the layer.
+const MockAnswerer = Layer.sync(Answerer, () => ({
+  answer: () => Effect.succeed(new Answer({ prose: "", cards: [], filter: null, followups: [] })),
+}));
+const MockJudge = Layer.sync(Judge, () => ({
+  judge: () => Effect.succeed({ faithful: true, score: 1, rationale: "stub" }),
 }));
 
 const DbLive = PgMigrator.layer({
   loader: Migrator.fromGlob(import.meta.glob("../db/migrations/*.ts")),
 }).pipe(Layer.provide(NodeServices.layer), Layer.orDie, Layer.provideMerge(PgTest));
 
-const TestLive = Layer.mergeAll(DbLive, MockRouter, MockKb);
+const TestLive = Layer.mergeAll(DbLive, MockRouter, MockKb, MockAnswerer, MockJudge);
 
 // Minimal course + live listing so the retrieval `filterListings` has something to return.
 const seedNewarkCourse = Effect.gen(function*() {
@@ -117,6 +132,7 @@ describe("runEval", () => {
           embeddingModel: "mock",
           termsObserved: 1,
           concurrency: 1,
+          evalProse: false,
         });
 
         const byQ = Object.fromEntries(results.map((r) => [r.question, r]));

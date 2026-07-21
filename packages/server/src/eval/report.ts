@@ -42,6 +42,8 @@ export interface Summary {
   readonly latency: { readonly p50: number; readonly p95: number; };
   readonly feeX100: number;
   readonly fieldMiss: ReadonlyArray<readonly [string, number]>;
+  // §11.2 prose faithfulness — null when the prose pass didn't run (EVAL_PROSE off).
+  readonly proseFaithful: { readonly n: number; readonly pct: number | null; };
 }
 
 const pctTrue = (xs: ReadonlyArray<boolean>): number | null =>
@@ -93,6 +95,10 @@ export const summarize = (results: ReadonlyArray<ItemResult>): Summary => {
 
   const latencies = results.map((r) => r.latencyMs);
 
+  const proseFlags = results
+    .map((r) => r.proseFaithful)
+    .filter((x): x is boolean => x !== null);
+
   return {
     snapshot: { filterExactPct, ndcg10Pct: (ndcg10 ?? 0) * 100 },
     filterExact: { n: feFlags.length, pct: filterExactPct },
@@ -108,6 +114,7 @@ export const summarize = (results: ReadonlyArray<ItemResult>): Summary => {
     latency: { p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95) },
     feeX100,
     fieldMiss,
+    proseFaithful: { n: proseFlags.length, pct: pctTrue(proseFlags) },
   };
 };
 
@@ -155,6 +162,13 @@ export const formatReport = (s: Summary, meta: { runId: string; gitSha: string; 
     }`,
   );
   lines.push(`  ⚠ fee off-by-100 (silent & catastrophic, §11.2): ${s.feeX100}`);
+  lines.push(
+    s.proseFaithful.n === 0
+      ? "prose_faithful: — (run with EVAL_PROSE=1 to score the answer agent, §11.2)"
+      : `prose_faithful: ${
+        pct(s.proseFaithful.pct)
+      }  (${s.proseFaithful.n} answered items, LlmJudge)`,
+  );
   lines.push(
     `Latency: p50 ${s.latency.p50}ms · p95 ${s.latency.p95}ms   (cost/query: n/a — Phase 5 §12)`,
   );

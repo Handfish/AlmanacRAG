@@ -6,7 +6,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { AnswererGeminiLive } from "./adapters/answerer-gemini.js";
 import { EmbedderGeminiLive } from "./adapters/embedder-gemini.js";
+import { JudgeGeminiLive } from "./adapters/judge-gemini.js";
 import { PgKnowledgeBaseLive } from "./adapters/pg-knowledge-base.js";
 import { RouterGeminiLive } from "./adapters/router-gemini.js";
 import { ROUTER_VERSION } from "./adapters/router-prompt.js";
@@ -51,9 +53,17 @@ const program = Effect.gen(function*() {
   const embeddingModel = yield* Config.string("GEMINI_EMBEDDING_MODEL").pipe(
     Config.withDefault("gemini-embedding-001"),
   );
+  // Phase 5 (§11.2): score prose_faithful via the answer agent + LlmJudge. Opt-in — two
+  // extra LLM calls/item — so the cheap router+retrieval gate (§11.4) is the default path.
+  const evalProse = yield* Config.string("EVAL_PROSE").pipe(
+    Config.withDefault("0"),
+    Config.map((s) => s === "1"),
+  );
 
   yield* Console.log(
-    `Running eval (concurrency ${concurrency}, today ${EVAL_TODAY.toISOString().slice(0, 10)})…`,
+    `Running eval (concurrency ${concurrency}, today ${EVAL_TODAY.toISOString().slice(0, 10)}${
+      evalProse ? ", +prose_faithful" : ""
+    })…`,
   );
   const { runId, results } = yield* runEval({
     today: EVAL_TODAY,
@@ -62,6 +72,7 @@ const program = Effect.gen(function*() {
     embeddingModel,
     termsObserved: 1, // §11.1 — the observation window; recorded so old runs stay interpretable
     concurrency,
+    evalProse,
   });
 
   const summary = summarize(results);
@@ -103,10 +114,14 @@ const program = Effect.gen(function*() {
 
 const RetrievalLive = PgKnowledgeBaseLive.pipe(Layer.provide(EmbedderGeminiLive));
 
+// Router + retrieval are always needed; Answerer + Judge only when EVAL_PROSE=1, but
+// providing them unconditionally is cheap (layers are built lazily) and keeps wiring simple.
 NodeRuntime.runMain(
   program.pipe(
     Effect.provide(RetrievalLive),
     Effect.provide(RouterGeminiLive),
+    Effect.provide(AnswererGeminiLive),
+    Effect.provide(JudgeGeminiLive),
     Effect.provide(SqlLive),
   ),
 );

@@ -7,6 +7,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import { chatEffect, ChatGroup, feedbackEffect, FeedbackGroup } from "./chat.js";
 
 // The typed HttpApi surface (ADR-I4). Phase 0 shipped GET /health; Phase 3 adds the
 // `search` group — retrieval only, no generation (§16 M3). Phases 5/6 add `chat`
@@ -69,7 +70,15 @@ export class SearchGroup extends HttpApiGroup.make("search").add(
   }),
 ) {}
 
-export class CatalogApi extends HttpApi.make("catalog").add(HealthGroup).add(SearchGroup) {}
+// The chat + feedback groups (Phase 5, §10) live in `http/chat.ts`; their JSON handlers
+// run the answer agent under the single-active-run lock. The SSE surface (§10.3) is a
+// separate raw route (`ChatSseRouteLive`) merged by `main.ts`.
+export class CatalogApi extends HttpApi.make("catalog")
+  .add(HealthGroup)
+  .add(SearchGroup)
+  .add(ChatGroup)
+  .add(FeedbackGroup)
+{}
 
 // Handlers for the `health` group.
 const HealthGroupLive = HttpApiBuilder.group(
@@ -98,8 +107,27 @@ const SearchGroupLive = HttpApiBuilder.group(
       }).pipe(Effect.orDie)),
 );
 
-// The API registered into an HttpRouter, with its group handlers provided.
+// Handlers for the `chat` + `feedback` groups (Phase 5, §10). The effects live in
+// http/chat.ts; here they bind to the concrete `CatalogApi`. Both require the agent ports
+// + SqlClient, satisfied by `main.ts`.
+const ChatGroupLive = HttpApiBuilder.group(
+  CatalogApi,
+  "chat",
+  (handlers) => handlers.handle("chat", ({ payload }) => chatEffect(payload)),
+);
+
+const FeedbackGroupLive = HttpApiBuilder.group(
+  CatalogApi,
+  "feedback",
+  (handlers) => handlers.handle("feedback", ({ payload }) => feedbackEffect(payload)),
+);
+
+// The API registered into an HttpRouter, with its group handlers provided. The chat and
+// feedback handlers require the agent ports (Router/KnowledgeBase/Answerer) + SqlClient,
+// satisfied by `main.ts`.
 export const ApiLive = HttpApiBuilder.layer(CatalogApi).pipe(
   Layer.provide(HealthGroupLive),
   Layer.provide(SearchGroupLive),
+  Layer.provide(ChatGroupLive),
+  Layer.provide(FeedbackGroupLive),
 );

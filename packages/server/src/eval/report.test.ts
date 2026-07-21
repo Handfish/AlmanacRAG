@@ -20,6 +20,7 @@ const item = (over: Partial<ItemResult>): ItemResult => ({
   refused: false,
   latencyMs: 100,
   diffs: [],
+  proseFaithful: null,
   ...over,
 });
 

@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { filterListings } from "../retrieval/filter-listings.js";
 import { hybridRrf } from "../retrieval/hybrid-rrf.js";
+import { hydrateCards, listingsForCourses, readObservationWindow } from "../retrieval/hydrate.js";
 
 // The KnowledgeBase adapter (architecture.md §7, Phase 3) — the retrieval port over
 // Postgres. `search` embeds the query (RETRIEVAL_QUERY), resolves the active model
@@ -52,6 +53,30 @@ export const PgKnowledgeBaseLive = Layer.effect(
           Effect.provideService(SqlClient, sql),
           Effect.mapError((cause) =>
             new KnowledgeBaseError({ message: "filterListings failed", cause })
+          ),
+        ),
+
+      listingsForCourses: (courseIds, perCourse) =>
+        listingsForCourses(courseIds, perCourse).pipe(
+          Effect.provideService(SqlClient, sql),
+          Effect.mapError((cause) =>
+            new KnowledgeBaseError({ message: "listingsForCourses failed", cause })
+          ),
+        ),
+
+      hydrate: (listingIds) =>
+        // The model authors nothing here — `why` lines are attached by the answer
+        // agent (agent/answer-agent.ts); this call reads only live facts (§10.4).
+        hydrateCards(listingIds, new Map()).pipe(
+          Effect.provideService(SqlClient, sql),
+          Effect.mapError((cause) => new KnowledgeBaseError({ message: "hydrate failed", cause })),
+        ),
+
+      observationWindow: () =>
+        readObservationWindow().pipe(
+          Effect.provideService(SqlClient, sql),
+          Effect.mapError((cause) =>
+            new KnowledgeBaseError({ message: "observationWindow failed", cause })
           ),
         ),
     };

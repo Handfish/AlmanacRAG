@@ -31,8 +31,9 @@ describe("spine", () => {
           `;
           expect(rows.length).toBe(1);
           // Bumped by each migration set: '1' (0002) → '2' (0003 typed layer) →
-          // '3' (0004 semantic layer) → '4' (0005 eval harness — eval_item/run/result).
-          expect(rows[0]?.value).toBe("4");
+          // '3' (0004 semantic layer) → '4' (0005 eval harness) →
+          // '5' (0006 chat — chat_session/chat_message/feedback).
+          expect(rows[0]?.value).toBe("5");
         }),
       ));
 

@@ -1,10 +1,13 @@
 import { ListingFilter } from "@catalog/domain/filter";
+import { Answerer } from "@catalog/domain/ports/answerer";
+import { Judge } from "@catalog/domain/ports/judge";
 import { KnowledgeBase } from "@catalog/domain/ports/knowledge-base";
 import { Router } from "@catalog/domain/ports/router";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import * as Agent from "../agent/answer-agent.js";
 import { filterListings } from "../retrieval/filter-listings.js";
 import { canonicalFilter, type FieldDiff, fieldDiffs, filterExact } from "./filter-compare.js";
 import type { Shape } from "./golden-set.js";
@@ -34,6 +37,10 @@ export interface EvalConfig {
   readonly embeddingModel: string;
   readonly termsObserved: number;
   readonly concurrency: number;
+  // Phase 5: when true, also run the FULL answer agent + LlmJudge per item to score
+  // `prose_faithful` (§11.2). Opt-in (EVAL_PROSE=1) because it adds two LLM calls/item;
+  // the CI gate (§11.4) stays on the cheap router+retrieval headlines.
+  readonly evalProse: boolean;
 }
 
 export interface ItemResult {
@@ -49,6 +56,7 @@ export interface ItemResult {
   readonly refused: boolean;
   readonly latencyMs: number;
   readonly diffs: ReadonlyArray<FieldDiff>;
+  readonly proseFaithful: boolean | null; // §11.2 — null unless evalProse ran this item
 }
 
 export interface EvalRun {
@@ -93,6 +101,32 @@ const isHard = (shape: Shape): boolean => shape === "filtered" || shape === "ava
 
 const pgIntArray = (ids: ReadonlyArray<string>): string => `{${ids.join(",")}}`;
 
+/** Render the hydrated cards as the judge's grounding CONTEXT (§11.2) — the real facts
+ * the answer stands on, so an unsupported prose claim is catchable. */
+const renderContext = (result: Agent.AnswerResult): string =>
+  result.cards.length === 0
+    ? "(no courses retrieved)"
+    : result.cards
+      .map((c) => {
+        const fee = c.totalFeeCents === null ? "" : ` · $${(c.totalFeeCents / 100).toFixed(0)}`;
+        const hrs = c.contactHours === null ? "" : ` · ${c.contactHours}h`;
+        return `- ${c.courseTitle} [${c.status}] · ${c.campus} · ${c.deliveryMode}${hrs}${fee}`;
+      })
+      .join("\n");
+
+/** Run the full answer agent + LlmJudge for one item and return `prose_faithful` (§11.2).
+ * Independent of the retrieval scoring above — it measures the ANSWER, not the router. */
+const scoreProse = (question: string, today: Date) =>
+  Effect.gen(function*() {
+    const result = yield* Agent.run(question, today);
+    const judge = yield* Judge;
+    const verdict = yield* judge.judge(question, result.answer.prose, renderContext(result));
+    return verdict.faithful;
+  }).pipe(
+    // A judge/agent fault must not sink the whole run — score it null and move on.
+    Effect.catchCause(() => Effect.succeed<boolean | null>(null)),
+  );
+
 const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
   Effect.gen(function*() {
     const router = yield* Router;
@@ -121,6 +155,11 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
     const { decision, retrieved } = outcome;
     const scored = relevant.size > 0;
 
+    // §11.2 prose faithfulness — only when opted in (two extra LLM calls per item).
+    const proseFaithful = cfg.evalProse
+      ? yield* scoreProse(row.question, cfg.today)
+      : null;
+
     return {
       itemId: row.id,
       question: row.question,
@@ -135,6 +174,7 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
       refused: decision.refuse,
       latencyMs: Math.round(Duration.toMillis(duration)),
       diffs: expectedRefuse ? [] : fieldDiffs(decision.filter, expectedFilter),
+      proseFaithful,
       retrievedIds: retrieved,
       // The canonical wire form of what the router actually asked for — persisted for
       // post-hoc inspection (a thumbs-down debugs against the exact filter, §12).
@@ -145,7 +185,7 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
 /** Run the whole golden set, persist `eval_run` + `eval_result`, return the scored results. */
 export const runEval = (
   cfg: EvalConfig,
-): Effect.Effect<EvalRun, never, SqlClient | Router | KnowledgeBase> =>
+): Effect.Effect<EvalRun, never, SqlClient | Router | KnowledgeBase | Answerer | Judge> =>
   Effect.gen(function*() {
     const sql = yield* SqlClient;
 
@@ -160,7 +200,10 @@ export const runEval = (
       embeddingModel: cfg.embeddingModel,
       termsObserved: cfg.termsObserved,
       k: K,
-      note: "Phase 4: router + retrieval; prose_faithful deferred to Phase 5.",
+      evalProse: cfg.evalProse,
+      note: cfg.evalProse
+        ? "Phase 5: router + retrieval + answer agent + LlmJudge (prose_faithful)."
+        : "router + retrieval; prose_faithful skipped (EVAL_PROSE=1 to enable).",
     };
     const runRows = yield* sql<{ id: string; }>`
       INSERT INTO eval_run (git_sha, config)
@@ -180,7 +223,7 @@ export const runEval = (
         VALUES (
           ${runId}, ${r.itemId}, ${r.actualFilterJson}::jsonb,
           ${r.filterExact}, ${pgIntArray(r.retrievedIds)}::bigint[],
-          ${r.ndcg10}, ${r.recallAt10}, ${r.mrr}, ${null}, ${r.refused},
+          ${r.ndcg10}, ${r.recallAt10}, ${r.mrr}, ${r.proseFaithful}, ${r.refused},
           ${r.latencyMs}, ${null})`, { concurrency: cfg.concurrency });
 
     yield* sql`UPDATE eval_run SET finished_at = now() WHERE id = ${runId}`;
@@ -198,6 +241,7 @@ export const runEval = (
       refused: r.refused,
       latencyMs: r.latencyMs,
       diffs: r.diffs,
+      proseFaithful: r.proseFaithful,
     }));
     return { runId, results };
   }).pipe(Effect.orDie);

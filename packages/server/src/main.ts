@@ -5,11 +5,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import { createServer } from "node:http";
+import { AnswererGeminiLive } from "./adapters/answerer-gemini.js";
 import { EmbedderGeminiLive } from "./adapters/embedder-gemini.js";
 import { PgKnowledgeBaseLive } from "./adapters/pg-knowledge-base.js";
+import { RouterGeminiLive } from "./adapters/router-gemini.js";
 import { SqlLive } from "./adapters/sql-live.js";
 import { AppConfig } from "./config.js";
 import { ApiLive } from "./http/api.js";
+import { ChatSseRouteLive } from "./http/chat.js";
 import { TelemetryLive } from "./telemetry.js";
 
 // The composition root (plan §6.5) — the ONE file that wires every layer.
@@ -22,13 +25,21 @@ import { TelemetryLive } from "./telemetry.js";
 // Gemini embedder for the query side. Still requires SqlClient, satisfied by SqlLive.
 const RetrievalLive = PgKnowledgeBaseLive.pipe(Layer.provide(EmbedderGeminiLive));
 
+// The agent ports (Phase 5, §8/§10): the router (NL → filter), retrieval, and the
+// answerer (structured Answer). Swapping any provider is an edit here (plan §6.5).
+const AgentLive = Layer.mergeAll(RouterGeminiLive, RetrievalLive, AnswererGeminiLive);
+
+// The served app: the typed HttpApi (health/search/chat/feedback) plus the raw SSE
+// route (§10.3). Both draw on the agent ports + SqlClient.
+const AppRoutes = Layer.mergeAll(ApiLive, ChatSseRouteLive);
+
 // The port comes from AppConfig (env PORT, default 3000), so the server layer is
 // built inside an Effect that reads it.
 const HttpLive = Layer.unwrap(
   Effect.gen(function*() {
     const config = yield* AppConfig;
-    return HttpRouter.serve(ApiLive).pipe(
-      Layer.provide(RetrievalLive),
+    return HttpRouter.serve(AppRoutes).pipe(
+      Layer.provide(AgentLive),
       Layer.provide(NodeHttpServer.layer(() => createServer(), { port: config.port })),
     );
   }),
