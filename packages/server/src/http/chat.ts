@@ -214,6 +214,8 @@ const encodeEvent = (event: Agent.AnswerEvent): string => {
         return JSON.stringify({ delta: event.delta });
       case "card":
         return JSON.stringify(event.card);
+      case "history":
+        return JSON.stringify(event.history);
       case "window":
         return JSON.stringify(event.window);
       case "done":

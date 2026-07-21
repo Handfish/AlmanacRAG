@@ -21,6 +21,8 @@ const item = (over: Partial<ItemResult>): ItemResult => ({
   latencyMs: 100,
   diffs: [],
   proseFaithful: null,
+  temporalRouted: null,
+  temporalVerdict: null,
   ...over,
 });
 

@@ -40,6 +40,11 @@ export type Shape =
 export type Resolve =
   | { readonly kind: "filter"; }
   | { readonly kind: "title"; readonly patterns: ReadonlyArray<string>; }
+  // Phase 7 temporal: the item names a real course and the router must route it to
+  // `course_history` (historyQuery), not refuse. `patterns` resolve the expected course
+  // (so we can confirm the right one was found); the answer's honesty is scored on the
+  // composed verdict (§10.6), not on retrieval.
+  | { readonly kind: "history"; readonly patterns: ReadonlyArray<string>; }
   | { readonly kind: "none"; };
 
 export interface GoldenItem {
@@ -359,20 +364,25 @@ const eligibility: ReadonlyArray<GoldenItem> = [
     `Eligibility for "${pat}". Answerable (not a refusal): route the title to search, filter null. ${why}`,
 }));
 
-// ── temporal (≈5%) — recurrence / price-history; no history tool yet → refuse ──────
+// ── temporal (≈5%) — recurrence / price-history → course_history, honesty-bounded ──
+// Phase 7 (§16 M7): these are NO LONGER refusals. The router routes them to `historyQuery`
+// (a real named course), and the answer is bounded by the observation window (§10.6). At
+// n=1 the corpus makes the correct verdict "insufficient" — an explicit "I've only seen it
+// once", never a fabricated schedule. The synthetic-history fixture exercises the positive
+// ("grounded") branch (history/synth-history.integration.test.ts).
 const temporal: ReadonlyArray<GoldenItem> = [
-  "When does the LSAT prep course run again?",
-  "Will the Certified Paralegal course be offered next spring?",
-  "Has the PMP Certification Program gotten more expensive over time?",
-  "When was the last time GRE prep was offered?",
-  "Is the Data Analytics Course coming back next year?",
-].map((question): GoldenItem => ({
-  question,
+  ["When does the LSAT Test Prep Live-Online course run again?", ["LSAT Test Prep Live-Online"]],
+  ["Will the Certified Paralegal course be offered next spring?", ["Certified Paralegal"]],
+  ["Has the PMP Certification Program gotten more expensive over time?", ["PMP Certification"]],
+  ["When was the last time the GRE Test Prep course was offered?", ["GRE Test Prep"]],
+  ["Is the Data Analytics Course coming back next year?", ["Data Analytics Course"]],
+].map(([question, pats]): GoldenItem => ({
+  question: question as string,
   shape: "temporal",
   expectedFilter: null,
-  resolve: none,
+  resolve: { kind: "history", patterns: pats as ReadonlyArray<string> },
   rubric:
-    "Recurrence / price-history needs the course_history tool (§8), absent in Phase 4. Correct answer is a bounded 'I can't tell you that yet' → refuse.",
+    "Temporal/recurrence about a REAL course → route to course_history (historyQuery), NOT refuse (§8.1). At n=1 the honest verdict is 'insufficient' — 'I've only seen it once', bounded by the observation window (§10.6) — never a fabricated schedule.",
 }));
 
 // ── unanswerable (≈15%) — out of scope or too vague; refuse (§10.6) ───────────────

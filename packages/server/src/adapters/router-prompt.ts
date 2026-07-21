@@ -11,14 +11,15 @@ import * as Schema from "effect/Schema";
 // hint; `decodeRoute` re-validates through the domain `ListingFilter`.
 
 /** Bumped when the prompt or router schema changes; recorded in `eval_run.config`. */
-export const ROUTER_VERSION = "router-v3";
+export const ROUTER_VERSION = "router-v4"; // v4: temporal → historyQuery (Phase 7), not refuse
 
 export const SYSTEM =
   `You are the query router for a Rutgers continuing-education course catalog. Turn ONE user question into a JSON routing decision. Accuracy over ambition — a wrong filter silently hides the exact course the user wanted.
 
-Decompose the question into two independent halves:
-- searchQuery: the TOPIC / subject matter, as a short search phrase ("cybersecurity", "grant writing", "leadership for school administrators"). This is the soft, semantic half. Null if the question is purely structural (e.g. "everything in Newark under $500").
-- the FILTER fields below: the HARD, structured predicates. Set a field ONLY when the question explicitly constrains it. Never add a default. Emit null for every field you are not constraining.
+Decompose the question into three independent, MUTUALLY EXCLUSIVE routes:
+- historyQuery: set this — and leave searchQuery and every filter field null — when the question is TEMPORAL about a specific course: how often it runs, whether/when it will be offered again, when it last ran, or how its price has changed over time ("when does the LSAT prep run again?", "will the Paralegal course be offered next spring?", "has the PMP program gotten more expensive?", "when was GRE prep last offered?"). Put the COURSE NAME in historyQuery. These are answerable now via course history — do NOT refuse them. Null unless the question is temporal in this sense.
+- searchQuery: the TOPIC / subject matter, as a short search phrase ("cybersecurity", "grant writing", "leadership for school administrators"). This is the soft, semantic half. Null if the question is purely structural (e.g. "everything in Newark under $500") or a history question.
+- the FILTER fields below: the HARD, structured predicates. Set a field ONLY when the question explicitly constrains it. Never add a default. Emit null for every field you are not constraining. All null for a history question.
 
 Naming ONE course is not filtering. When the question is ABOUT a specific named course ("how many hours is the LSAT Test Prep Live-Online course?", "tell me about the Human Resources Professional program"), put the whole course name in searchQuery and leave EVERY filter field null. Words inside a course's name are not predicates: "Live-Online" in a title is not a delivery/campus filter, and "program"/"course"/"certification" meaning "this offering" is not a \`program\` filter. Only set \`program\` when the user names an offering DEPARTMENT to restrict to.
 
@@ -38,10 +39,10 @@ These ARE answerable — do NOT refuse them:
 - Comparing two or more NAMED courses ("difference between the LSAT and GRE prep", "compare A and B"): set searchQuery to a phrase covering both ("LSAT and GRE prep"), filter null.
 - Eligibility / prerequisite questions about a NAMED course ("can I take X without experience?", "do I need anything before Y?", "what are the prerequisites for Z?"): searchQuery is the course name, filter null.
 
-refuse (boolean): set true — and leave searchQuery null and every filter field null — ONLY when:
+refuse (boolean): set true — and leave historyQuery null, searchQuery null, and every filter field null — ONLY when:
 - the question is outside a continuing-ed catalog (a PhD/undergraduate degree, K-12 tutoring, "a class at Princeton", flying lessons, filing taxes);
-- it names no topic and no course and is too vague to route ("the AI class" — ambiguous across many; "a good class"; "something fun");
-- it asks WHEN a specific course will next run or recur, or how its price has changed over time ("when does X run again?", "will it be offered next spring?", "has it gotten more expensive?") — that needs course history, which this router cannot answer.
+- it names no topic and no course and is too vague to route ("the AI class" — ambiguous across many; "a good class"; "something fun").
+A temporal question about a real course is NOT a refusal — route it to historyQuery. Only refuse a temporal question when it is itself out of scope ("when will you offer a PhD again?").
 Otherwise refuse is false.
 
 Output ONLY the JSON object. Every field is required; use null (or false for refuse) when it does not apply.`;
@@ -85,11 +86,12 @@ export const ROUTER_RESPONSE_SCHEMA: G = {
   type: "OBJECT",
   properties: {
     refuse: bool(false),
+    historyQuery: str(true),
     searchQuery: str(true),
     ...FILTER_PROPS,
   },
-  required: ["refuse", "searchQuery", ...Object.keys(FILTER_PROPS)],
-  propertyOrdering: ["refuse", "searchQuery", ...Object.keys(FILTER_PROPS)],
+  required: ["refuse", "historyQuery", "searchQuery", ...Object.keys(FILTER_PROPS)],
+  propertyOrdering: ["refuse", "historyQuery", "searchQuery", ...Object.keys(FILTER_PROPS)],
   nullable: false,
 };
 
@@ -111,13 +113,23 @@ const decodeFilter = Schema.decodeUnknownSync(ListingFilter);
  */
 export const decodeRoute = (raw: unknown): RouteDecision => {
   const refuse = get(raw, "refuse") === true;
-  const rawQuery = get(raw, "searchQuery");
-  const searchQuery = !refuse && typeof rawQuery === "string" && rawQuery.trim().length > 0
-    ? rawQuery.trim()
+
+  // A history question is its own route (§8.1, Phase 7): when set, it wins over the
+  // filter/search halves — the caller runs the history tool, not live retrieval. Bounded to
+  // 200 chars so a runaway generation can't smuggle a paragraph in as a "course name".
+  const rawHistory = get(raw, "historyQuery");
+  const historyQuery = !refuse && typeof rawHistory === "string" && rawHistory.trim().length > 0
+    ? rawHistory.trim().slice(0, 200)
     : null;
 
+  const rawQuery = get(raw, "searchQuery");
+  const searchQuery =
+    !refuse && historyQuery === null && typeof rawQuery === "string" && rawQuery.trim().length > 0
+      ? rawQuery.trim()
+      : null;
+
   let filter: ListingFilter | null = null;
-  if (!refuse) {
+  if (!refuse && historyQuery === null) {
     const wire: Record<string, unknown> = {};
     for (const key of FILTER_KEYS) {
       const v = get(raw, key);
@@ -142,7 +154,7 @@ export const decodeRoute = (raw: unknown): RouteDecision => {
     }
   }
 
-  return new RouteDecision({ filter, searchQuery, refuse });
+  return new RouteDecision({ filter, searchQuery, historyQuery, refuse });
 };
 
 /** The user turn: the question plus the deterministic `today` for relative-date resolution. */

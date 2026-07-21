@@ -39,6 +39,15 @@ export interface Summary {
     readonly accuracyPct: number | null;
     readonly falseRefusals: number;
   };
+  // Phase 7 (§10.6): the temporal slice routes to course_history (not refuse) and answers
+  // honestly. `routedPct` — sent to history, not refused; `honestPct` — verdict is a real
+  // answer ("insufficient" at n=1 or "grounded" with history), never a fabricated schedule.
+  readonly temporal: {
+    readonly n: number;
+    readonly routedPct: number | null;
+    readonly honestPct: number | null;
+    readonly verdicts: ReadonlyArray<readonly [string, number]>;
+  };
   readonly latency: { readonly p50: number; readonly p95: number; };
   readonly feeX100: number;
   readonly fieldMiss: ReadonlyArray<readonly [string, number]>;
@@ -78,9 +87,19 @@ export const summarize = (results: ReadonlyArray<ItemResult>): Summary => {
   }).filter((a) => a.n > 0);
 
   // Refusal (§11.2): accuracy on the shapes whose correct answer is "I can't tell you"
-  // (unanswerable + temporal → expectedRefuse), plus false refusals on answerable items.
+  // (the `unanswerable` slice → expectedRefuse; temporal is now answerable, §10.6), plus
+  // false refusals on answerable items.
   const refusalSlice = results.filter((r) => r.expectedRefuse);
   const falseRefusals = results.filter((r) => !r.expectedRefuse && r.refused).length;
+
+  // Temporal (§10.6, Phase 7): routed to history, and answered honestly.
+  const temporalRows = results.filter((r) => r.shape === "temporal");
+  const verdictCounts = new Map<string, number>();
+  for (const r of temporalRows) {
+    if (r.temporalVerdict !== null) {
+      verdictCounts.set(r.temporalVerdict, (verdictCounts.get(r.temporalVerdict) ?? 0) + 1);
+    }
+  }
 
   // Per-field near-misses (§11.2), aggregated; fee_x100 gets its own headline count.
   const fieldCounts = new Map<string, number>();
@@ -110,6 +129,16 @@ export const summarize = (results: ReadonlyArray<ItemResult>): Summary => {
       sliceN: refusalSlice.length,
       accuracyPct: pctTrue(refusalSlice.map((r) => r.refused)),
       falseRefusals,
+    },
+    temporal: {
+      n: temporalRows.length,
+      routedPct: pctTrue(temporalRows.map((r) => r.temporalRouted === true)),
+      honestPct: pctTrue(
+        temporalRows.map((r) =>
+          r.temporalVerdict === "insufficient" || r.temporalVerdict === "grounded"
+        ),
+      ),
+      verdicts: [...verdictCounts.entries()].sort((a, b) => b[1] - a[1]),
     },
     latency: { p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95) },
     feeX100,
@@ -151,10 +180,18 @@ export const formatReport = (s: Summary, meta: { runId: string; gitSha: string; 
 
   // Refusal + near-misses + latency.
   lines.push(
-    `Refusal (unanswerable+temporal, n=${s.refusal.sliceN}): `
+    `Refusal (unanswerable, n=${s.refusal.sliceN}): `
       + `${
         pct(s.refusal.accuracyPct)
       } correct · ${s.refusal.falseRefusals} false refusal(s) on answerable items`,
+  );
+  lines.push(
+    `Temporal (§10.6, n=${s.temporal.n}): ${pct(s.temporal.routedPct)} routed to history · `
+      + `${pct(s.temporal.honestPct)} answered honestly${
+        s.temporal.verdicts.length === 0
+          ? ""
+          : ` [${s.temporal.verdicts.map(([v, n]) => `${v}×${n}`).join(", ")}]`
+      }`,
   );
   lines.push(
     `Per-field misses: ${

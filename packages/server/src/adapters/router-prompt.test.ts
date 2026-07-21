@@ -9,6 +9,7 @@ import { decodeRoute } from "./router-prompt.js";
 // A full response with every field present (nulls for the unconstrained ones).
 const full = (over: Record<string, unknown>): Record<string, unknown> => ({
   refuse: false,
+  historyQuery: null,
   searchQuery: null,
   campus: null,
   program: null,
@@ -70,5 +71,26 @@ describe("decodeRoute", () => {
     const d = decodeRoute(full({ campus: "Mars", searchQuery: "geology" }));
     expect(d.filter).toBeNull(); // "Mars" is not a Campus → whole filter drops
     expect(d.searchQuery).toBe("geology"); // the soft half survives
+  });
+
+  // ── Phase 7: the temporal route (§8.1) ────────────────────────────────────────
+  it("a history question routes to historyQuery and wins over filter/search", () => {
+    const d = decodeRoute(
+      full({
+        historyQuery: "PMP Certification Program",
+        searchQuery: "project management",
+        campus: "Newark",
+      }),
+    );
+    expect(d.historyQuery).toBe("PMP Certification Program");
+    expect(d.searchQuery).toBeNull(); // the history route is exclusive
+    expect(d.filter).toBeNull();
+    expect(d.refuse).toBe(false); // temporal is answerable now, not a refusal
+  });
+
+  it("a refusal nulls the history query too", () => {
+    const d = decodeRoute(full({ refuse: true, historyQuery: "when will you offer a PhD again" }));
+    expect(d.refuse).toBe(true);
+    expect(d.historyQuery).toBeNull();
   });
 });

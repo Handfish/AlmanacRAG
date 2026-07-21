@@ -57,6 +57,11 @@ export interface ItemResult {
   readonly latencyMs: number;
   readonly diffs: ReadonlyArray<FieldDiff>;
   readonly proseFaithful: boolean | null; // §11.2 — null unless evalProse ran this item
+  // Phase 7 temporal (§10.6) — null on non-temporal items. `temporalRouted`: the router
+  // sent it to course_history (not refuse). `temporalVerdict`: the composed honesty verdict
+  // ("insufficient" at n=1, "grounded" with history, "not_found" | "misrouted" | "refused").
+  readonly temporalRouted: boolean | null;
+  readonly temporalVerdict: string | null;
 }
 
 export interface EvalRun {
@@ -134,14 +139,30 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
 
     const expectedFilter = decodeExpectedFilter(row.expectedFilter);
     const relevant = new Set(row.expectedIds);
-    const expectedRefuse = relevant.size === 0 && expectedFilter === null;
+    const isTemporal = row.shape === "temporal";
+    // Temporal items are answerable now (they route to course_history), so they are NOT
+    // refusal items and are NOT scored on filter/retrieval — only on routing + honesty.
+    const expectedRefuse = !isTemporal && relevant.size === 0 && expectedFilter === null;
 
     const [duration, outcome] = yield* Effect.timed(Effect.gen(function*() {
       const decision = yield* router.route(row.question, cfg.today);
 
-      // Retrieval, keyed on the item's shape (see header).
       let retrieved: ReadonlyArray<string> = [];
-      if (!decision.refuse) {
+      let temporalRouted: boolean | null = null;
+      let temporalVerdict: string | null = null;
+
+      if (isTemporal) {
+        // Phase 7 (§8.1/§10.6): must route to course_history, not refuse; then the honesty
+        // verdict is composed deterministically (answerHistory — no Answerer, no spend).
+        temporalRouted = !decision.refuse && decision.historyQuery !== null;
+        if (temporalRouted && decision.historyQuery !== null) {
+          const h = yield* Agent.answerHistory(decision.historyQuery);
+          temporalVerdict = h.verdict;
+        } else {
+          temporalVerdict = decision.refuse ? "refused" : "misrouted";
+        }
+      } else if (!decision.refuse) {
+        // Retrieval, keyed on the item's shape (see header).
         if (isHard(row.shape) && decision.filter !== null) {
           retrieved = yield* filterCourses(decision.filter, K);
         } else if (isSoft(row.shape) && decision.searchQuery !== null) {
@@ -149,11 +170,13 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
           retrieved = hits.map((h) => h.courseId as string);
         }
       }
-      return { decision, retrieved };
+      return { decision, retrieved, temporalRouted, temporalVerdict };
     }));
 
-    const { decision, retrieved } = outcome;
-    const scored = relevant.size > 0;
+    const { decision, retrieved, temporalRouted, temporalVerdict } = outcome;
+    const scored = !isTemporal && relevant.size > 0;
+    // filter_exact / near-misses apply only to non-refusal, non-temporal items.
+    const scorable = !expectedRefuse && !isTemporal;
 
     // §11.2 prose faithfulness — only when opted in (two extra LLM calls per item).
     const proseFaithful = cfg.evalProse
@@ -166,15 +189,17 @@ const scoreOne = (row: ItemRow, cfg: EvalConfig) =>
       shape: row.shape,
       band: row.band,
       expectedRefuse,
-      // filter_exact is n/a for a refusal item (there is no correct filter to hit).
-      filterExact: expectedRefuse ? null : filterExact(decision.filter, expectedFilter),
+      // filter_exact is n/a for a refusal or temporal item (no correct filter to hit).
+      filterExact: scorable ? filterExact(decision.filter, expectedFilter) : null,
       ndcg10: scored ? ndcgAt(retrieved, relevant, 10) : null,
       recallAt10: scored ? recallAt(retrieved, relevant, 10) : null,
       mrr: scored ? mrr(retrieved, relevant) : null,
       refused: decision.refuse,
       latencyMs: Math.round(Duration.toMillis(duration)),
-      diffs: expectedRefuse ? [] : fieldDiffs(decision.filter, expectedFilter),
+      diffs: scorable ? fieldDiffs(decision.filter, expectedFilter) : [],
       proseFaithful,
+      temporalRouted,
+      temporalVerdict,
       retrievedIds: retrieved,
       // The canonical wire form of what the router actually asked for — persisted for
       // post-hoc inspection (a thumbs-down debugs against the exact filter, §12).
@@ -244,6 +269,8 @@ export const runEval = (
       latencyMs: r.latencyMs,
       diffs: r.diffs,
       proseFaithful: r.proseFaithful,
+      temporalRouted: r.temporalRouted,
+      temporalVerdict: r.temporalVerdict,
     }));
     return { runId, results };
   }).pipe(Effect.orDie);

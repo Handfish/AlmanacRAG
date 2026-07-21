@@ -4,6 +4,7 @@ import type { Card, ObservationWindow } from "../answer.js";
 import type { Campus, DeliveryMode, Status } from "../course.js";
 import type { KnowledgeBaseError } from "../errors.js";
 import type { ListingFilter } from "../filter.js";
+import type { CourseHistory } from "../history.js";
 import type { CourseId, ListingId } from "../ids.js";
 
 // Retrieval over the catalog (architecture.md §7). The Phase-3 adapter
@@ -84,6 +85,13 @@ export type KnowledgeBaseShape = {
   /** The observation window (§5.3.4/§10.6): when the clock started (`system_epoch`)
    * and how many terms have been observed — the honesty bound on recurrence claims. */
   readonly observationWindow: () => Effect.Effect<ObservationWindow, KnowledgeBaseError>;
+  // ── Phase 7 (the history path) ─────────────────────────────────────────────
+  /** `course_history` (§8.1 / §5.3.5): the per-term rollup + change log for one course,
+   * PLUS the observation window (§5.3.4) and the per-course evidence count that bound a
+   * recurrence claim (§10.6). Returns null when the course id is unknown. */
+  readonly courseHistory: (
+    courseId: CourseId,
+  ) => Effect.Effect<CourseHistory | null, KnowledgeBaseError>;
 };
 
 export class KnowledgeBase

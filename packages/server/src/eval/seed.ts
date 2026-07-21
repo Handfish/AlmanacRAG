@@ -35,6 +35,9 @@ const resolveExpectedIds = (item: GoldenItem) => {
     case "filter":
       return idsByFilter(item);
     case "title":
+    // A temporal (history) item names a real course; resolve it by title so the runner can
+    // confirm the router routed to the RIGHT course_history (§8.1).
+    case "history":
       return idsByTitle(item.resolve.patterns);
     case "none":
       return Effect.succeed([] as ReadonlyArray<string>);

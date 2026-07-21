@@ -46,6 +46,7 @@ const result = (cards: ReadonlyArray<Card>, prose: string): Agent.AnswerResult =
   answer: new Answer({ prose, cards: [], filter: null, followups: [] }),
   cards,
   window: { observingSince: "2026-07-16", termsObserved: 1 },
+  history: null,
 });
 
 describe("compat §10.5", () => {

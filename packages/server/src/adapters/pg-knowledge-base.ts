@@ -5,6 +5,7 @@ import { KnowledgeBase, type SearchHit } from "@catalog/domain/ports/knowledge-b
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { courseHistory } from "../retrieval/course-history.js";
 import { filterListings } from "../retrieval/filter-listings.js";
 import { hybridRrf } from "../retrieval/hybrid-rrf.js";
 import { hydrateCards, listingsForCourses, readObservationWindow } from "../retrieval/hydrate.js";
@@ -86,6 +87,14 @@ export const PgKnowledgeBaseLive = Layer.effect(
           Effect.provideService(SqlClient, sql),
           Effect.mapError((cause) =>
             new KnowledgeBaseError({ message: "observationWindow failed", cause })
+          ),
+        ),
+
+      courseHistory: (courseId) =>
+        courseHistory(courseId).pipe(
+          Effect.provideService(SqlClient, sql),
+          Effect.mapError((cause) =>
+            new KnowledgeBaseError({ message: "courseHistory failed", cause })
           ),
         ),
     };

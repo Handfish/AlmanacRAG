@@ -1,4 +1,5 @@
 import { Answer, type Card, CardRef } from "@catalog/domain/answer";
+import type { CourseHistory } from "@catalog/domain/history";
 import type { CourseId, ListingId } from "@catalog/domain/ids";
 import { type AnswerCandidate, Answerer } from "@catalog/domain/ports/answerer";
 import { type FilteredListing, KnowledgeBase } from "@catalog/domain/ports/knowledge-base";
@@ -67,6 +68,7 @@ const MockKb = (opts: {
   readonly search?: ReadonlyArray<string>;
   readonly listings?: ReadonlyArray<FilteredListing>;
   readonly cards?: ReadonlyArray<Card>;
+  readonly history?: CourseHistory | null;
 }) =>
   Layer.sync(KnowledgeBase, () => ({
     search: () =>
@@ -87,6 +89,7 @@ const MockKb = (opts: {
         ),
       ),
     observationWindow: () => Effect.succeed({ observingSince: "2026-07-16", termsObserved: 1 }),
+    courseHistory: () => Effect.succeed(opts.history ?? null),
   }));
 
 const TODAY = new Date("2026-07-21");
@@ -100,7 +103,14 @@ describe("answer-agent", () => {
       expect(result.answer.filter).toBe(null);
     }).pipe(
       Effect.provide(
-        MockRouter(new RouteDecision({ filter: null, searchQuery: null, refuse: true })),
+        MockRouter(
+          new RouteDecision({
+            filter: null,
+            searchQuery: null,
+            historyQuery: null,
+            refuse: true,
+          }),
+        ),
       ),
       Effect.provide(
         MockAnswerer(() =>
@@ -127,7 +137,12 @@ describe("answer-agent", () => {
     }).pipe(
       Effect.provide(
         MockRouter(
-          new RouteDecision({ filter: null, searchQuery: "grant writing", refuse: false }),
+          new RouteDecision({
+            filter: null,
+            searchQuery: "grant writing",
+            historyQuery: null,
+            refuse: false,
+          }),
         ),
       ),
       Effect.provide(MockAnswerer((candidates) =>
@@ -158,6 +173,7 @@ describe("answer-agent", () => {
       }),
       cards: [card("100", "7", "Grant Writing I", 41500)],
       window: { observingSince: "2026-07-16", termsObserved: 1 },
+      history: null,
     };
     const tags = Agent.answerEvents(result).map((e) => e._tag);
     expect(tags[0]).toBe("filter");
@@ -166,4 +182,81 @@ describe("answer-agent", () => {
     expect(tags).toContain("card");
     expect(tags).toContain("window");
   });
+
+  // ── Phase 7: the temporal (history) route ────────────────────────────────────
+  const history = (termsSeen: number, terms: CourseHistory["terms"]): CourseHistory => ({
+    courseId: "7" as CourseId,
+    courseTitle: "PMP Certification Program",
+    terms,
+    changes: [],
+    termsSeen,
+    window: { observingSince: "2024-09-05", termsObserved: 3 },
+  });
+
+  const term = (season: CourseHistory["terms"][number]["season"], year: number, fee: number) => ({
+    term: `${season} ${year}`,
+    season,
+    year,
+    rank: year * 10 + 4,
+    sections: 1,
+    minFeeCents: fee,
+    maxFeeCents: fee,
+    statuses: ["closed"] as ReadonlyArray<Card["status"]>,
+    stillListed: year === 2026,
+  });
+
+  const HistoryRoute = MockRouter(
+    new RouteDecision({
+      filter: null,
+      searchQuery: null,
+      historyQuery: "PMP Certification Program",
+      refuse: false,
+    }),
+  );
+
+  it.effect("temporal route with ≥2 terms answers grounded, carries the history + timeline", () =>
+    Effect.gen(function*() {
+      const result = yield* Agent.run("has the PMP program gotten more expensive?", TODAY);
+      expect(result.refused).toBe(false);
+      expect(result.history).not.toBeNull();
+      expect(result.history!.termsSeen).toBe(3);
+      // deterministic prose reports the trajectory; the model authored none of it
+      expect(result.answer.prose).toContain("PMP Certification Program");
+      expect(result.answer.prose).toMatch(/risen from \$395/);
+      // the history event rides the SSE sequence, before window
+      const tags = Agent.answerEvents(result).map((e) => e._tag);
+      expect(tags).toContain("history");
+      expect(tags.indexOf("history")).toBeLessThan(tags.indexOf("window"));
+    }).pipe(
+      Effect.provide(HistoryRoute),
+      Effect.provide(
+        MockAnswerer(() => new Answer({ prose: "unused", cards: [], filter: null, followups: [] })),
+      ),
+      Effect.provide(MockKb({
+        search: ["7"],
+        history: history(3, [
+          term("Fall", 2024, 39500),
+          term("Fall", 2025, 41500),
+          term("Fall", 2026, 45000),
+        ]),
+      })),
+    ));
+
+  it.effect("temporal route with 1 term answers 'I don't know yet' (§10.6), never refuses", () =>
+    Effect.gen(function*() {
+      const result = yield* Agent.run("does the PMP program run every year?", TODAY);
+      expect(result.refused).toBe(false); // an honest answer, NOT a refusal
+      expect(result.history!.termsSeen).toBe(1);
+      expect(result.answer.prose).toMatch(/only seen the PMP Certification Program once/i);
+      expect(result.answer.prose).toContain("September 2024"); // the observation window bound
+    }).pipe(
+      Effect.provide(HistoryRoute),
+      Effect.provide(
+        MockAnswerer(() => new Answer({ prose: "unused", cards: [], filter: null, followups: [] })),
+      ),
+      Effect.provide(MockKb({
+        search: ["7"],
+        history: history(1, [term("Fall", 2026, 45000)]),
+      })),
+    ));
 });

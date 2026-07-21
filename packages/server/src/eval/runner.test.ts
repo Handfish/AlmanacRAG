@@ -25,16 +25,19 @@ const decisions: Record<string, RouteDecision> = {
   "courses in Newark": new RouteDecision({
     filter: new ListingFilter({ campus: "Newark" }),
     searchQuery: null,
+    historyQuery: null,
     refuse: false,
   }),
   "tell me about grant writing": new RouteDecision({
     filter: null,
     searchQuery: "grant writing",
+    historyQuery: null,
     refuse: false,
   }),
   "do you offer flying lessons": new RouteDecision({
     filter: null,
     searchQuery: null,
+    historyQuery: null,
     refuse: true,
   }),
 };
@@ -42,7 +45,8 @@ const decisions: Record<string, RouteDecision> = {
 const MockRouter = Layer.succeed(Router, {
   route: (question) =>
     Effect.succeed(
-      decisions[question] ?? new RouteDecision({ filter: null, searchQuery: null, refuse: true }),
+      decisions[question]
+        ?? new RouteDecision({ filter: null, searchQuery: null, historyQuery: null, refuse: true }),
     ),
 });
 
@@ -65,6 +69,7 @@ const MockKb = Layer.sync(KnowledgeBase, () => ({
   listingsForCourses: () => Effect.succeed([]),
   hydrate: () => Effect.succeed([]),
   observationWindow: () => Effect.succeed({ observingSince: "2026-07-16", termsObserved: 1 }),
+  courseHistory: () => Effect.succeed(null),
 }));
 
 // Answerer + Judge are required by the runner's type (the prose pass), but with

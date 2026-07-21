@@ -16,6 +16,7 @@
     "eval:seed": "tsx src/main-eval-seed.ts",
     "eval": "tsx src/main-eval.ts",
     "chat": "tsx src/main-chat.ts",
+    "synth:history": "tsx src/main-synth-history.ts",
     "benchmark:fetch": "tsx src/ingest/benchmark.ts"
   },
   "dependencies": {
