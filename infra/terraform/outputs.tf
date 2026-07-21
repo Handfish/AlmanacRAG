@@ -25,13 +25,13 @@ output "pages_url" {
 
 # Sensitive — surface with `terraform output -raw neon_postgres_url_pooled`.
 output "neon_postgres_url_pooled" {
-  description = "Pooled Neon URI (runtime). Mirrored into Secret Manager as ${var.project_name}-postgres-url."
+  description = "Pooled Neon URI (runtime). Mirrored into Secret Manager as <project_name>-postgres-url."
   value       = neon_project.catalog.connection_uri_pooler
   sensitive   = true
 }
 
 output "neon_postgres_admin_url" {
-  description = "Direct Neon URI (migrations only). Mirrored into Secret Manager as ${var.project_name}-postgres-admin-url."
+  description = "Direct Neon URI (migrations only). Mirrored into Secret Manager as <project_name>-postgres-admin-url."
   value       = neon_project.catalog.connection_uri
   sensitive   = true
 }

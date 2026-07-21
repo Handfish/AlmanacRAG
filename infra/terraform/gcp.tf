@@ -34,7 +34,9 @@ resource "google_service_account" "api" {
 # GEMINI_API_KEY → runtime LLM key.
 resource "google_secret_manager_secret" "postgres_url" {
   secret_id = "${var.project_name}-postgres-url"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.svc]
 }
 resource "google_secret_manager_secret_version" "postgres_url" {
@@ -44,7 +46,9 @@ resource "google_secret_manager_secret_version" "postgres_url" {
 
 resource "google_secret_manager_secret" "postgres_admin_url" {
   secret_id = "${var.project_name}-postgres-admin-url"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.svc]
 }
 resource "google_secret_manager_secret_version" "postgres_admin_url" {
@@ -54,7 +58,9 @@ resource "google_secret_manager_secret_version" "postgres_admin_url" {
 
 resource "google_secret_manager_secret" "gemini_api_key" {
   secret_id = "${var.project_name}-gemini-api-key"
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   depends_on = [google_project_service.svc]
 }
 resource "google_secret_manager_secret_version" "gemini_api_key" {
