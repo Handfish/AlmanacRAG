@@ -1,3 +1,4 @@
+import { BadRequest } from "@catalog/domain/errors";
 import { ListingFilter } from "@catalog/domain/filter";
 import type { ListingId } from "@catalog/domain/ids";
 import { KnowledgeBase } from "@catalog/domain/ports/knowledge-base";
@@ -9,6 +10,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import { CardWire, chatEffect, ChatGroup, feedbackEffect, FeedbackGroup } from "./chat.js";
+import * as RateLimit from "./rate-limit.js";
 
 // The typed HttpApi surface (ADR-I4). Phase 0 shipped GET /health; Phase 3 adds the
 // `search` group — retrieval only, no generation (§16 M3). Phases 5/6 add `chat`
@@ -184,10 +186,27 @@ const HydrateGroupLive = HttpApiBuilder.group(
 // Handlers for the `chat` + `feedback` groups (Phase 5, §10). The effects live in
 // http/chat.ts; here they bind to the concrete `CatalogApi`. Both require the agent ports
 // + SqlClient, satisfied by `main.ts`.
+// The JSON `/chat` handler rate-limits before the agent runs, so a throttled client never
+// triggers the three-Gemini-call fan-out (§ abuse guard, mirrors the SSE route). This
+// endpoint only declares `BadRequest`, so an over-limit request fails as one (message says
+// so) rather than a 429 — the browser surface is SSE (`/chat/stream`), which does return a
+// proper 429 with Retry-After. To return 429 here too, add an error type to `ChatGroup`.
 const ChatGroupLive = HttpApiBuilder.group(
   CatalogApi,
   "chat",
-  (handlers) => handlers.handle("chat", ({ payload }) => chatEffect(payload)),
+  (handlers) =>
+    handlers.handle("chat", ({ payload }) =>
+      Effect.gen(function*() {
+        const decision = yield* RateLimit.rateDecision;
+        if (!decision.allowed) {
+          return yield* Effect.fail(
+            new BadRequest({
+              message: `rate limit exceeded — retry after ${decision.retryAfterSec}s`,
+            }),
+          );
+        }
+        return yield* chatEffect(payload);
+      })),
 );
 
 const FeedbackGroupLive = HttpApiBuilder.group(

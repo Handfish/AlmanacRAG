@@ -23,6 +23,7 @@ import {
   releaseRun,
 } from "../db/repos/chat.js";
 import { canonicalFilter } from "../eval/filter-compare.js";
+import * as RateLimit from "./rate-limit.js";
 
 // The chat surface (§10, Phase 5). Two transports over ONE agent (agent/answer-agent.ts):
 //   • POST /chat        — JSON: the whole hydrated answer at once (the programmatic /
@@ -74,8 +75,14 @@ const WindowWire = Schema.Struct({
   termsObserved: Schema.Int,
 });
 
+// Abuse guard (cost cap): a course-catalog question is a short sentence. Bounding it here
+// caps the input-token bill of the three Gemini calls one turn fans out into (router +
+// embedder + answerer), and rejects a megabyte "question" before it is ever buffered into a
+// prompt. The SSE transport enforces the same ceiling in `parseBody` (raw route — no decode).
+const MAX_QUESTION_CHARS = 500;
+
 const ChatRequest = Schema.Struct({
-  question: Schema.String,
+  question: Schema.String.check(Schema.isMaxLength(MAX_QUESTION_CHARS)),
   sessionId: Schema.optional(Schema.String),
 });
 
@@ -240,10 +247,24 @@ const parseBody = (text: string): { question: string; sessionId: string | undefi
 
 const sseHandler = Effect.gen(function*() {
   const request = yield* HttpServerRequest.HttpServerRequest;
+  // Rate-limit BEFORE reading the body or calling the agent — a throttled client must not
+  // trigger the three-Gemini-call fan-out (§ abuse guard). Backstop to the edge WAF rule.
+  const decision = yield* RateLimit.rateDecision;
+  if (!decision.allowed) {
+    return HttpServerResponse.text("rate limit exceeded", {
+      status: 429,
+      headers: { "retry-after": String(decision.retryAfterSec) },
+    });
+  }
   const text = yield* request.text.pipe(Effect.catchCause(() => Effect.succeed("{}")));
   const body = parseBody(text);
   if (body.question.trim().length === 0) {
     return HttpServerResponse.text("missing question", { status: 400 });
+  }
+  if (body.question.length > MAX_QUESTION_CHARS) {
+    // Same cost cap as the JSON transport's schema (§ abuse guard) — reject before the
+    // three Gemini calls, rather than truncating into a partial prompt.
+    return HttpServerResponse.text("question too long", { status: 413 });
   }
   // Compute + persist the whole answer, then stream its events. (The client gets typed
   // §10.3 events; token-by-token generation is a Phase-6 UX refinement.) Any failure —

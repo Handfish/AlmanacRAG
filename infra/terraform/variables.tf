@@ -34,6 +34,16 @@ variable "cloud_run_max_instances" {
   default     = 3
 }
 
+variable "cloud_run_concurrency" {
+  description = <<-EOT
+    Requests one Cloud Run instance serves concurrently. The hard ceiling on simultaneous
+    Gemini fan-out is cloud_run_max_instances × this, so keep it modest as a cost/abuse cap
+    (Cloud Run's own default is 80). Raise it only if instances sit CPU-idle under load.
+  EOT
+  type        = number
+  default     = 20
+}
+
 # ── Neon (Postgres + pgvector) ────────────────────────────────────────────────
 variable "neon_api_key" {
   description = "Neon API key. Leave empty to use the NEON_API_KEY env var instead."

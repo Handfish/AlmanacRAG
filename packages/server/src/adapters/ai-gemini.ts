@@ -15,6 +15,12 @@ import * as Redacted from "effect/Redacted";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
+/** Output-token ceiling for the public chat surface (router + answerer). A grounded route
+ * (a small ListingFilter) and a grounded answer (1–2 sentences + a handful of `why` clauses)
+ * both fit comfortably under this; the cap bounds cost if a prompt-injected question tries to
+ * elicit a long generation. Extraction does NOT use it (see `generateJson`). */
+export const CHAT_MAX_OUTPUT_TOKENS = 1024;
+
 /** Transport / job-level failure (whole batch), distinct from a per-row decode miss. */
 export class GeminiBatchError extends Data.TaggedError("GeminiBatchError")<{
   readonly message: string;
@@ -203,6 +209,11 @@ export const generateJson = (
   system: string,
   user: string,
   schema: G,
+  // Abuse guard (cost cap): the response_schema constrains the *shape* of the output but
+  // not its *length* — a long `prose` string or a padded array still bills output tokens.
+  // Callers on the public chat surface (router/answerer) pass a bound; extraction leaves it
+  // undefined because a full `ExtractedCourse` object legitimately needs the room.
+  maxOutputTokens?: number,
 ): Effect.Effect<GeminiStructuredResult, GeminiBatchError> =>
   request(apiKey, `${BASE_URL}/models/${model}:generateContent`, {
     system_instruction: { parts: [{ text: system }] },
@@ -211,6 +222,7 @@ export const generateJson = (
       temperature: 0,
       response_mime_type: "application/json",
       response_schema: schema,
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
     },
   }).pipe(Effect.map((response) => {
     const usage = usageOf(response);

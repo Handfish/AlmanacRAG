@@ -3,7 +3,7 @@ import { Router } from "@catalog/domain/ports/router";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { GeminiApiKey, generateJson } from "./ai-gemini.js";
+import { CHAT_MAX_OUTPUT_TOKENS, GeminiApiKey, generateJson } from "./ai-gemini.js";
 import { decodeRoute, ROUTER_RESPONSE_SCHEMA, routerUserPrompt, SYSTEM } from "./router-prompt.js";
 
 // The Gemini router adapter (architecture.md §8) — the query-understanding seam behind
@@ -34,6 +34,7 @@ export const RouterGeminiLive = Layer.effect(
           SYSTEM,
           routerUserPrompt(question, today),
           ROUTER_RESPONSE_SCHEMA,
+          CHAT_MAX_OUTPUT_TOKENS,
         ).pipe(
           Effect.flatMap((res) => {
             if (res.text === null) {

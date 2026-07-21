@@ -97,6 +97,12 @@ resource "google_cloud_run_v2_service" "api" {
       max_instance_count = var.cloud_run_max_instances
     }
 
+    # Abuse guard (cost cap): requests one instance serves at once. The hard ceiling on
+    # concurrent Gemini fan-out is max_instance_count × this — keep it modest so a traffic
+    # spike (or a flood that slips past the Cloudflare rate-limit rule) cannot fan out
+    # unbounded LLM calls. Default Cloud Run concurrency is 80; we pin it low deliberately.
+    max_instance_request_concurrency = var.cloud_run_concurrency
+
     containers {
       image = var.server_image
 

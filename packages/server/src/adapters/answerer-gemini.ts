@@ -4,7 +4,7 @@ import { Answerer } from "@catalog/domain/ports/answerer";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { GeminiApiKey, generateJson } from "./ai-gemini.js";
+import { CHAT_MAX_OUTPUT_TOKENS, GeminiApiKey, generateJson } from "./ai-gemini.js";
 import {
   ANSWER_RESPONSE_SCHEMA,
   answererUserPrompt,
@@ -43,6 +43,7 @@ export const AnswererGeminiLive = Layer.effect(
           SYSTEM,
           answererUserPrompt(question, candidates),
           ANSWER_RESPONSE_SCHEMA,
+          CHAT_MAX_OUTPUT_TOKENS,
         ).pipe(
           Effect.flatMap((res) => {
             if (res.text === null) {
