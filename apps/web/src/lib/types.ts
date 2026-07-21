@@ -69,3 +69,12 @@ export interface FeedbackResponse {
   readonly ok: true;
   readonly promotedEvalItemId: string | null;
 }
+
+/** GET /health (server `HealthStatus`). `uptime` is seconds since the API process started —
+ * near-zero on a freshly cold-started Cloud Run container, so the UI can tell a genuine
+ * cold start from a merely-slow warm request. */
+export interface HealthResponse {
+  readonly status: "ok";
+  readonly service: string;
+  readonly uptime: number;
+}

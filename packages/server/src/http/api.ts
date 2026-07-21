@@ -20,6 +20,12 @@ import * as RateLimit from "./rate-limit.js";
 const HealthStatus = Schema.Struct({
   status: Schema.Literal("ok"),
   service: Schema.String,
+  // Seconds since this process started. Cloud Run scales the service to zero, so a fresh
+  // (cold-started) container reports a near-zero uptime; the web surface reads this to tell
+  // the user *accurately* whether a slow first request is a cold start (§10.5) rather than
+  // guessing from latency. Cheap by construction — no DB/LLM touch, so `/health`'s own
+  // response time is itself a clean cold-vs-warm signal.
+  uptime: Schema.Number,
 });
 
 export class HealthGroup extends HttpApiGroup.make("health").add(
@@ -134,7 +140,12 @@ const HealthGroupLive = HttpApiBuilder.group(
   CatalogApi,
   "health",
   (handlers) =>
-    handlers.handle("health", () => Effect.succeed({ status: "ok" as const, service: "catalog" })),
+    handlers.handle("health", () =>
+      Effect.sync(() => ({
+        status: "ok" as const,
+        service: "catalog",
+        uptime: Math.floor(process.uptime()),
+      }))),
 );
 
 // Handlers for the `search` group. Retrieval failures become 500s (`orDie`) — the

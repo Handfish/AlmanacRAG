@@ -2,6 +2,7 @@ import type {
   ChatResponse,
   FeedbackResponse,
   FilterWire,
+  HealthResponse,
   HydrateResponse,
   RelaxResponse,
   SearchResponse,
@@ -19,6 +20,14 @@ const post = async <T>(path: string, body: unknown): Promise<T> => {
   });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return (await res.json()) as T;
+};
+
+/** Liveness + cold-start probe (§10.5). Does no DB/LLM work, so its latency and the
+ * `uptime` it reports are a clean read on whether the container is booting vs. warm. */
+export const health = async (): Promise<HealthResponse> => {
+  const res = await fetch("/api/health");
+  if (!res.ok) throw new Error(`/health → ${res.status}`);
+  return (await res.json()) as HealthResponse;
 };
 
 /** Ask a question — the full LLM path (router → retrieve → answer → live-hydrate, §8/§10). */

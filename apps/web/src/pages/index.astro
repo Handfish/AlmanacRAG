@@ -62,6 +62,18 @@ const examples = [
         {examples.map((ex) => <button class="example" type="button" data-ask={ex}>{ex}</button>)}
       </div>
 
+      <!-- Prominent cold-start banner. Shown by lib/app.ts on page load while the API
+           container is booting (Cloud Run scales to zero, §10.5) — a signal the user can't
+           miss, unlike the sub-second status-line flip. Hidden until app.ts reveals it. -->
+      <div id="wake-banner" role="status" aria-live="polite" aria-hidden="true">
+        <span class="wake-flake" aria-hidden="true">❄</span>
+        <span class="wake-text">
+          <strong>Waking the server…</strong> It was asleep to save resources. Your first
+          question can take up to a minute — go ahead and type it now; it&rsquo;ll run as
+          soon as the server is up.
+        </span>
+      </div>
+
       <section id="answer" aria-live="polite"></section>
     </main>
 

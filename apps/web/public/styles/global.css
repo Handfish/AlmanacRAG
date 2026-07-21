@@ -188,6 +188,50 @@ main {
   font-size: 0.85rem;
   padding: var(--space-xs) var(--space-2xs);
 }
+/* cold-start escalation (set in lib/app.ts once a request outlasts the warm threshold) */
+#status-line.cold {
+  color: var(--color-gold);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  animation: cold-pulse 1.4s ease-in-out infinite;
+}
+@keyframes cold-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #status-line.cold { animation: none; }
+}
+
+/* ── cold-start wake banner ──
+   Prominent counterpart to #status-line.cold: shown on page load while the API container
+   boots, so the multi-second cold start is impossible to miss. Toggled via `.show`. */
+#wake-banner {
+  display: none;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 var(--space-lg);
+  padding: var(--space-md);
+  border: 1px solid var(--color-gold);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--color-panel-2);
+  color: var(--color-ink);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+#wake-banner.show { display: flex; }
+#wake-banner strong { color: var(--color-gold); font-weight: 600; }
+#wake-banner .wake-flake {
+  color: var(--color-gold);
+  font-size: 1.3rem;
+  line-height: 1.2;
+  flex: none;
+  animation: cold-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  #wake-banner .wake-flake { animation: none; }
+}
 
 /* ── example seeds ── */
 .examples {

@@ -34,6 +34,68 @@ let sessionId: string | undefined;
 let currentFilter: FilterWire | null = null;
 let lastWindow: ObservationWindow | null = null;
 
+// ── cold-start awareness (§10.5) ──────────────────────────────────────────────────
+// Cloud Run scales the API to zero, so the first request after idle pays a cold-start
+// penalty (container boot + Postgres wake). We surface that *accurately* instead of
+// guessing from latency: `/health` does no DB/LLM work, so a slow health response — or
+// one whose reported `uptime` is near zero — means the container is booting. A genuinely
+// slow *warm* request (a chat call fanning out to several model requests) is therefore
+// never mislabelled as a cold start.
+const WARM_TTL_MS = 10 * 60_000; // trust a confirmed 200 this long (Cloud Run keeps ~15m warm)
+const HEALTH_SLOW_MS = 700; // a warm, DB-free /health answers well under this
+const COLD_UPTIME_S = 20; // a health hit reporting less uptime is a freshly-booted container
+
+const COLD_TEXT =
+  "❄ COLD STARTING — the server was asleep and is waking up. This first request can take up to a minute…";
+
+let lastWarmAt = 0; // ms timestamp of the last confirmed-up response (0 = never)
+let runSeq = 0; // bumped on every busy transition; guards async probes against a stale run
+
+/** True while a recent 200 still vouches for a warm container. */
+const knownWarm = (): boolean => lastWarmAt !== 0 && Date.now() - lastWarmAt < WARM_TTL_MS;
+/** Record that the container just answered — any 200 proves it is up. */
+const markWarm = (): void => {
+  lastWarmAt = Date.now();
+};
+
+const setStatus = (text: string, cold: boolean): void => {
+  const status = el("status-line");
+  status.textContent = text;
+  status.classList.toggle("cold", cold);
+};
+
+/** Show/hide the prominent page-load wake banner (#wake-banner). Distinct from the tiny
+ * status line: a cold container boots for several seconds, so on page load we surface that
+ * as a banner the user can't miss rather than a sub-second flip by the Ask button. Optional
+ * markup — a missing banner just no-ops so the island never hard-fails. */
+const showWake = (show: boolean): void => {
+  const banner = document.getElementById("wake-banner");
+  if (banner === null) return;
+  banner.classList.toggle("show", show);
+  banner.setAttribute("aria-hidden", show ? "false" : "true");
+};
+
+/** Probe `/health` concurrently with an in-flight run (`seq`) to decide, accurately,
+ * whether the wait is a cold start. Only touches the status line while `seq` is still the
+ * active run, so a probe that resolves after its run finished never clobbers a later view.
+ * `warmText` is what to show if the container turns out to be warm after all. */
+const probeCold = async (seq: number, warmText: string): Promise<void> => {
+  const slow = setTimeout(() => {
+    if (seq === runSeq) setStatus(COLD_TEXT, true); // health itself is slow ⇒ booting
+  }, HEALTH_SLOW_MS);
+  try {
+    const { uptime } = await api.health();
+    markWarm();
+    if (seq !== runSeq) return; // the run already finished — leave the DOM alone
+    if (uptime < COLD_UPTIME_S) setStatus(COLD_TEXT, true); // confirmed fresh container
+    else setStatus(warmText, false); // warm after all — retract any premature banner
+  } catch {
+    // Ignore: the real request will surface any error; leave the banner as-is.
+  } finally {
+    clearTimeout(slow);
+  }
+};
+
 const el = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
   if (node === null) throw new Error(`missing #${id}`);
@@ -64,7 +126,18 @@ const paint = (view: View): void => {
 const setBusy = (busy: boolean): void => {
   el<HTMLButtonElement>("ask-btn").disabled = busy;
   el<HTMLInputElement>("q").disabled = busy;
-  el("status-line").textContent = busy ? "thinking…" : "";
+
+  runSeq += 1; // invalidate any probe (or prewarm) from the previous run
+  showWake(false); // a user run takes over — the status line owns cold state from here
+  if (!busy) {
+    setStatus("", false);
+    return;
+  }
+  const warmText = "thinking…";
+  setStatus(warmText, false);
+  // Unless a recent 200 already vouches for the container, find out for sure — concurrently,
+  // so the banner reflects the *server's* state, not how long the LLM happens to take.
+  if (!knownWarm()) void probeCold(runSeq, warmText);
 };
 
 /** Whether a filter carries any user predicate (so a 0-result state is worth relaxing). */
@@ -75,6 +148,7 @@ const askChat = async (question: string): Promise<void> => {
   setBusy(true);
   try {
     const res = await api.chat(question, sessionId);
+    markWarm(); // a 200 proves the container is up — no cold banner on the next ask
     sessionId = res.sessionId;
     currentFilter = res.filter;
     lastWindow = res.window;
@@ -111,6 +185,7 @@ const rerunFilter = async (filter: FilterWire): Promise<void> => {
   try {
     currentFilter = filter;
     const { listings } = await api.search(filter);
+    markWarm(); // container answered — keep the cold banner off subsequent runs
     const ids = listings.map((l) => l.listingId).slice(0, 12);
     const cards = ids.length > 0 ? (await api.hydrate(ids)).cards : [];
 
@@ -197,6 +272,33 @@ const ask = (question: string): void => {
   void askChat(q);
 };
 
+/** Proactively wake the API on page load. On a cold container this surfaces the prominent
+ * wake banner before the user even asks, and the wake finishes while they read the page —
+ * so their first question lands on a warm server. Because prewarm absorbs the cold start,
+ * the banner shown *here* (not on the eventual ask, which is warm by then) is the only place
+ * the user reliably sees a cold start — hence the loud banner rather than the status line.
+ * `seq` claims the current run so a submitted question (which bumps `runSeq`) cleanly takes
+ * over and dismisses the banner. */
+const prewarm = async (): Promise<void> => {
+  const seq = (runSeq += 1);
+  const slow = setTimeout(() => {
+    if (seq === runSeq) showWake(true); // /health slow ⇒ container booting — say so, loudly
+  }, HEALTH_SLOW_MS);
+  try {
+    const { uptime } = await api.health();
+    markWarm();
+    // Final banner state = is this container still cold? A freshly-booted one (uptime < 20s,
+    // §10.5) may answer /health fast yet still be warming Postgres, so keep warning; a long-up
+    // one retracts any banner the slow timer raised. It clears for good on the user's ask
+    // (setBusy → showWake(false)), which lands warm.
+    if (seq === runSeq) showWake(uptime < COLD_UPTIME_S);
+  } catch {
+    if (seq === runSeq) showWake(false); // no health → the real request will surface any error
+  } finally {
+    clearTimeout(slow);
+  }
+};
+
 export const boot = (): void => {
   el<HTMLFormElement>("ask").addEventListener("submit", (event) => {
     event.preventDefault(); // never let the form do a native GET navigation (page refresh)
@@ -207,4 +309,5 @@ export const boot = (): void => {
     btn.addEventListener("click", () => ask(btn.dataset.ask ?? ""));
   });
   answerEl().addEventListener("click", onAnswerClick);
+  void prewarm();
 };
