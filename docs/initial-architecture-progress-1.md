@@ -287,9 +287,10 @@ loses on filtered 0.74, ~1300× slower at 7815ms p95, memory impossible). `tsc`�
 
 ## Phase 9 — Ship ☐ (§16 M9)
 
-- [ ] Podman quadlets (§13); OTel collector; timers
+- [ ] Terraform infra (`infra/terraform`) — free-tier managed services, the production form of §10.5: **Neon** (Postgres + pgvector, scale-to-zero), **Google Cloud Run** (`packages/server` API image + runtime SA, Artifact Registry, Secret Manager), **Cloudflare Pages** (`apps/web` static + the `/api/*` proxy Function → Cloud Run → Neon). One-time `terraform apply`; state stays local + gitignored (it holds the Neon/Gemini secrets in plaintext).
+- [ ] CI deploy (`.github/workflows/deploy.yml`) on push to `main` — ships app revisions only (Terraform owns the infra): build + push the API image to Artifact Registry, run Neon migrations against the direct URL, `gcloud run deploy`; `pnpm build:web` + `wrangler pages deploy` (the `functions/` proxy ships with it). Env/secrets/SA set by Terraform are preserved.
 - [ ] README with the ablation table; ADRs; 3-minute demo
-- **Exit:** deployed; docs complete
+- **Exit:** deployed on free-tier managed services (Neon + Cloud Run + Cloudflare Pages); docs complete
 
 ---
 

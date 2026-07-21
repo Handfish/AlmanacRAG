@@ -1,0 +1,18 @@
+# Keep the build context lean and the install layer cache stable. node_modules is
+# rebuilt inside the image; local build artifacts and secrets never ship.
+**/node_modules
+.git
+.github
+**/dist
+apps/web/.astro
+**/*.tsbuildinfo
+**/*.log
+.env
+.env.*
+!.env.example
+scratchpad
+docs
+deploy
+infra
+**/*.md
+!README.md

@@ -1,0 +1,113 @@
+name: Deploy
+
+# App deploy only — infrastructure is provisioned separately with Terraform (local state,
+# run from a workstation). This workflow assumes `terraform apply` has already created the
+# Cloud Run service, Artifact Registry repo, secrets, and Pages project.
+#
+# Two independent jobs:
+#   api — build & push the server image, run Neon migrations, roll a new Cloud Run revision.
+#   web — build Astro and Direct-Upload to Cloudflare Pages (functions/ ships the /api proxy).
+#
+# Required repo secrets:
+#   GCP_PROJECT_ID          GCP project id
+#   GCP_SA_KEY              JSON key for a deployer service account (roles: run.admin,
+#                           artifactregistry.writer, secretmanager.secretAccessor,
+#                           iam.serviceAccountUser on the runtime SA). Prefer Workload
+#                           Identity Federation over a long-lived key — see infra README.
+#   CLOUDFLARE_API_TOKEN    Pages:Edit token
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare account id
+#
+# PROJECT_NAME / GCP_REGION below must match the Terraform vars of the same name.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "apps/web/**"
+      - "Dockerfile"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+env:
+  PROJECT_NAME: almanac # GCP resource prefix (Cloud Run, Artifact Registry, secrets) — matches var.project_name
+  PAGES_PROJECT: almanac # Cloudflare Pages project name — matches var.cf_pages_project_name
+  GCP_REGION: us-east1
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build & push image
+        run: |
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${PROJECT_NAME}/server:${GITHUB_SHA::12}"
+          docker build -t "$IMAGE" .   # BuildKit is on by default → the Dockerfile cache mount works
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Migrations run against the DIRECT Neon URL (session mode), pulled from Secret
+      # Manager so the connection string never lives in GitHub. `pnpm migrate` → SqlAdmin.
+      - name: Run Neon migrations
+        run: |
+          POSTGRES_ADMIN_URL="$(gcloud secrets versions access latest \
+            --secret="${PROJECT_NAME}-postgres-admin-url" \
+            --project="${{ secrets.GCP_PROJECT_ID }}")" \
+          pnpm migrate
+
+      # Only the image changes; env/secrets/service-account set by Terraform are preserved.
+      - name: Deploy Cloud Run revision
+        run: |
+          gcloud run deploy "${PROJECT_NAME}-api" \
+            --image "$IMAGE" \
+            --region "${GCP_REGION}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --quiet
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:web
+
+      # Direct Upload. `dist` is the build output; ./functions (the /api proxy) is picked
+      # up automatically from the working directory. CATALOG_API_ORIGIN is already set on
+      # the project by Terraform, so the proxy resolves at runtime.
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          command: pages deploy dist --project-name=${{ env.PAGES_PROJECT }} --branch=main --compatibility-date=2024-11-06

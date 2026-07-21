@@ -7,7 +7,7 @@
   <img alt="Effect" src="https://img.shields.io/badge/Effect-v4%20(beta)-000000">
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white">
   <img alt="pgvector" src="https://img.shields.io/badge/pgvector-halfvec-4169E1">
-  <img alt="Anthropic" src="https://img.shields.io/badge/Claude-Haiku%2FSonnet-D97757">
+  <img alt="Gemini" src="https://img.shields.io/badge/Gemini-Flash--Lite-4285F4?logo=googlegemini&logoColor=white">
   <img alt="tests" src="https://img.shields.io/badge/tests-160%2B-2ea44f">
 </p>
 
@@ -165,7 +165,7 @@ Measuring first, then writing down which of your own arguments the data destroye
 - **Language / runtime** — TypeScript (strict), Node 22+, pnpm workspace
 - **Effect v4** — typed errors, dependency injection via `Layer`, durable workflows, `HttpApi`, `Schema` as the single source of truth for both wire types and DB decode. Pinned to one exact beta (`4.0.0-beta.99`); the whole `@effect/*` ecosystem now lives under `effect/unstable/*`.
 - **PostgreSQL 16 + pgvector** — one database does structured filtering, full-text (BM25 via `tsvector`), and vector search (`halfvec`). Dual clients: pooled through PgBouncer for queries, a direct admin connection for DDL only.
-- **Anthropic Claude** — Haiku-class for extraction and chunk-context (a full extraction pass over 995 pages costs ~$4), Sonnet-class for the chat router.
+- **Google Gemini** — Flash-Lite (`gemini-3.1-flash-lite`) for extraction and chunk-context (a full extraction pass over 995 pages runs to cents, not dollars), the NL→filter router, and the chat answerer/judge; `gemini-embedding-001` (1536-dim, stored as `halfvec`) for embeddings. A single thin REST adapter (`ai-gemini.ts`) sits behind the §4 ports — provider-swappable in one file.
 - **Web** — Astro 5 + a lean vanilla-TS island importing the domain contracts (`Card`/`ListingFilter`), calling the server's JSON endpoints. Editable filter chips re-run with no LLM call; a second OpenAI-compatible `/v1` surface drops into Open WebUI.
 - **Testing** — `@effect/vitest` + Testcontainers (real Postgres per suite, transaction-rollback isolation). 160+ tests across `tsc` · `oxlint` · `dprint` · `vitest` · `astro check`, run in CI.
 

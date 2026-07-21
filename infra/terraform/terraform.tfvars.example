@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored (holds secrets).
+# Secrets may also be supplied via env vars instead of this file:
+#   export TF_VAR_gemini_api_key=...      NEON_API_KEY=...      CLOUDFLARE_API_TOKEN=...
+
+# ── Required ──
+gcp_project_id        = "my-gcp-project"
+cloudflare_account_id = "0123456789abcdef0123456789abcdef"
+gemini_api_key        = "AIza..."
+
+# Provider auth (or set NEON_API_KEY / CLOUDFLARE_API_TOKEN in the environment and omit these):
+neon_api_key         = "napi_..."
+cloudflare_api_token = "..."
+
+# ── Optional (defaults shown) ──
+# project_name          = "almanac"
+# gcp_region            = "us-east1"
+# neon_region_id        = "aws-us-east-2"
+# cf_pages_project_name = "almanac"
+# cloud_run_max_instances = 3
