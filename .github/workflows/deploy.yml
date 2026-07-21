@@ -104,10 +104,12 @@ jobs:
       # Direct Upload. `dist` is the build output; ./functions (the /api proxy) is picked
       # up automatically from the working directory. CATALOG_API_ORIGIN is already set on
       # the project by Terraform, so the proxy resolves at runtime.
+      # Deploy with pnpm dlx (isolated download) rather than cloudflare/wrangler-action,
+      # whose npm-based install chokes on this repo's pnpm `workspace:*` deps
+      # (EUNSUPPORTEDPROTOCOL). ./functions ships the /api proxy automatically.
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/web
-          command: pages deploy dist --project-name=${{ env.PAGES_PROJECT }} --branch=main --compatibility-date=2024-11-06
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm dlx wrangler@4 pages deploy dist --project-name=${{ env.PAGES_PROJECT }} --branch=main
