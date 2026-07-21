@@ -17,8 +17,8 @@
 export const onRequest = async (
   context: {
     request: Request;
-    env: { CATALOG_API_ORIGIN?: string };
-    params: { path?: string | ReadonlyArray<string> };
+    env: { CATALOG_API_ORIGIN?: string; };
+    params: { path?: string | ReadonlyArray<string>; };
   },
 ): Promise<Response> => {
   const { request, env, params } = context;

@@ -2,11 +2,11 @@
 
 Free-tier hosting for the catalog RAG stack, as three managed services:
 
-| Piece                 | Service                         | What Terraform creates                                                                   |
-| --------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| Postgres + pgvector   | **Neon**                        | project (pg16), pooled + direct connection URIs                                          |
-| API server (`packages/server`) | **Google Cloud Run**     | service, runtime SA, Artifact Registry repo, Secret Manager secrets, public invoker      |
-| Astro web (`apps/web`)| **Cloudflare Pages**            | Pages project + the `CATALOG_API_ORIGIN` env var the `/api` proxy reads                   |
+| Piece                          | Service              | What Terraform creates                                                              |
+| ------------------------------ | -------------------- | ----------------------------------------------------------------------------------- |
+| Postgres + pgvector            | **Neon**             | project (pg16), pooled + direct connection URIs                                     |
+| API server (`packages/server`) | **Google Cloud Run** | service, runtime SA, Artifact Registry repo, Secret Manager secrets, public invoker |
+| Astro web (`apps/web`)         | **Cloudflare Pages** | Pages project + the `CATALOG_API_ORIGIN` env var the `/api` proxy reads             |
 
 The path split (browser → Pages → `/api/*` proxied to Cloud Run → Neon) is the production
 form of `architecture.md` §10.5. The proxy itself is a Pages Function at
@@ -86,4 +86,6 @@ requests `id-token: write`) over a long-lived JSON key.
 - **Seeding** — Terraform provisions empty Postgres. Run the ingest pipeline
   (`pnpm seed`, or the individual crawl/extract/index steps) against the Neon direct URL to
   populate the corpus before the app is useful.
+
+```
 ```
